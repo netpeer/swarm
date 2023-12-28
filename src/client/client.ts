@@ -229,8 +229,6 @@ export default class Client {
   #peerData = (peer, data) => {
     const { id, size, chunk } = JSON.parse(new TextDecoder().decode(data))
     peer.bw.down += size
-    console.log(data)
-    console.log(id, size, chunk)
 
     if (size <= MAX_MESSAGE_SIZE) {
       this.#noticeMessage(chunk, id)
@@ -240,8 +238,6 @@ export default class Client {
         ...this.#messagesToHandle[id],
         ...Object.values(chunk)
       ]
-      console.log(this.#messagesToHandle[id].length, size)
-      console.log(this.#messagesToHandle[id].length === Number(size))
 
       if (this.#messagesToHandle[id].length === Number(size)) {
         this.#noticeMessage(this.#messagesToHandle[id], id)

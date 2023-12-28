@@ -57,12 +57,9 @@ export default class Peer extends SimplePeer {
   async #chunkit(data: Uint8Array, id) {
     this.bw.up = data.length
     const size = data.length
-    console.log('cit')
-    console.log(size)
 
     // no needles chunking, keep it simple, if data is smaller then max size just send it
     if (data.length <= MAX_MESSAGE_SIZE) {
-      console.log('cit2')
       return this.write(JSON.stringify({ chunk: data, id, size: data.length }))
     }
 
