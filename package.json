@@ -4,7 +4,8 @@
   "exports": {
     ".": "./exports/index.js",
     "./client": "./exports/client.js",
-    "./server": "./exports/server.js"
+    "./server": "./exports/server.js",
+    "./browser": "./exports/browser/client.js"
   },
   "type": "module",
   "license": "MIT",
