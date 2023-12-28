@@ -1,14 +1,12 @@
 {
   "compilerOptions": {
     "target": "es2022",
-    "module": "es2022",
+    "module": "NodeNext",
     "outDir": "./exports",
-    "moduleResolution":"NodeNext",
+    "moduleResolution": "NodeNext",
     "allowJs": true,
-    "declaration": false
+    "declaration": true
   },
-  "include": [
-    "./src/**/*"
-  ],
+  "include": ["./src/**/*"],
   "exclude": ["./node_modules"]
 }

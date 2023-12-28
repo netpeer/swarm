@@ -1,6 +1,6 @@
 {
   "name": "@netpeer/swarm",
-  "version": "0.7.0",
+  "version": "0.6.0",
   "exports": {
     ".": "./exports/index.js",
     "./client": "./exports/client.js",
@@ -18,14 +18,12 @@
   "repository": "https://github.com/netpeer/swarm",
   "author": "vandeurenglenn <vandeurenglenn@gmail.com>",
   "devDependencies": {
-    "@rollup/plugin-commonjs": "^25.0.7",
-    "@rollup/plugin-json": "^6.1.0",
-    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-node-resolve": "^15.0.1",
     "@types/pako": "^2.0.0",
     "@types/simple-peer": "^9.11.8",
     "@vandeurenglenn/debug": "^1.0.0",
     "browserify": "^17.0.0",
-    "rollup": "^4.9.1",
+    "rollup": "^3.9.1",
     "rollup-plugin-modify": "^3.0.0"
   },
   "dependencies": {
@@ -33,7 +31,6 @@
     "@leofcoin/generate-account": "^1.0.3",
     "@rollup/plugin-typescript": "^11.0.0",
     "@vandeurenglenn/little-pubsub": "^1.3.3",
-    "@vandeurenglenn/simple-peer": "^11.0.1",
     "pako": "^2.0.4",
     "simple-peer": "^9.11.1",
     "socket-request-client": "^2.0.6",

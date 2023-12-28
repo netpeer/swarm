@@ -1,15 +1,24 @@
-import SocketClient from 'socket-request-client'
+import { SocketRequestClient } from 'socket-request-client'
 import Peer from './peer.js'
 import '@vandeurenglenn/debug'
+import { MAX_MESSAGE_SIZE } from './constants.js'
 
 export default class Client {
-  #peerConnection: RTCPeerConnection
-  #connections = {}
-  #stars = {}
+  #peerId
+  #connections: { [index: string]: Peer } = {}
+  #stars: { [index: string]: SocketRequestClient['clientConnection'] } = {}
   id: string
   networkVersion: string
   starsConfig: string[]
-  socketClient: SocketClient
+  socketClient: SocketRequestClient
+  messageSize = 262144
+  version: string
+
+  #messagesToHandle: { [id: string]: any[] } = {}
+
+  get peerId() {
+    return this.#peerId
+  }
 
   get connections() {
     return { ...this.#connections }
@@ -19,13 +28,19 @@ export default class Client {
     return Object.entries(this.#connections)
   }
 
-  constructor(id, networkVersion = 'peach', stars = ['wss://peach.leofcoin.org']) {
-    this.id = id || Math.random().toString(36).slice(-12);
-    this.peerJoined = this.peerJoined.bind(this)
-    this.peerLeft = this.peerLeft.bind(this)
-    this.starLeft = this.starLeft.bind(this)
-    this.starJoined = this.starJoined.bind(this)
+  getPeer(peerId) {
+    return this.#connections[peerId]
+  }
+
+  constructor(
+    peerId,
+    networkVersion = 'peach',
+    version,
+    stars = ['wss://peach.leofcoin.org']
+  ) {
+    this.#peerId = peerId
     this.networkVersion = networkVersion
+    this.version = version
 
     this._init(stars)
   }
@@ -34,139 +49,225 @@ export default class Client {
     this.starsConfig = stars
     // reconnectJob()
 
-    if (!globalThis.RTCPeerConnection) globalThis.wrtc = (await import('@koush/wrtc')).default
-    else globalThis.wrtc = {
-      RTCPeerConnection,
-      RTCSessionDescription,
-      RTCIceCandidate
-    }
+    if (!globalThis.RTCPeerConnection)
+      globalThis.wrtc = (await import('@koush/wrtc')).default
 
     for (const star of stars) {
       try {
-        this.socketClient = await SocketClient(star, this.networkVersion)
-        const id = await this.socketClient.request({url: 'id', params: {from: this.id}})
-        this.socketClient.peerId = id
-        this.#stars[id] = this.socketClient
+        const client = new SocketRequestClient(star, this.networkVersion)
+        this.#stars[star] = await client.init()
+        this.setupStarListeners(this.#stars[star])
+        this.#stars[star].send({
+          url: 'join',
+          params: { version: this.version, peerId: this.peerId }
+        })
       } catch (e) {
-        if (stars.indexOf(star) === stars.length -1 && !this.socketClient) throw new Error(`No star available to connect`);
+        if (stars.indexOf(star) === stars.length - 1 && !this.socketClient)
+          throw new Error(`No star available to connect`)
       }
     }
-
-    this.setupListeners()
-    
-    const peers = await this.socketClient.peernet.join({id: this.id})
-    for (const id of peers) {
-      if (id !== this.id && !this.#connections[id]) this.#connections[id] = await new Peer({channelName: `${id}:${this.id}`, socketClient: this.socketClient, id: this.id, to: id, peerId: id})
+    if (globalThis.navigator) {
+      globalThis.addEventListener('beforeunload', async () => this.close())
+    } else {
+      process.on('SIGINT', async () => {
+        process.stdin.resume()
+        await this.close()
+        process.exit()
+      })
     }
-
-    pubsub.subscribe('connection closed', (peer) => {
-        this.removePeer(peer.peerId)
-        setTimeout(() => {
-          this.peerJoined(peer.peerId)
-        }, 1000)
-    })
   }
 
-  setupListeners() {
-    this.socketClient.subscribe('peer:joined', this.peerJoined)
-    this.socketClient.subscribe('peer:left', this.peerLeft)
-    this.socketClient.subscribe('star:left', this.starLeft)
+  setupStarListeners(star) {
+    star.pubsub.subscribe('peer:joined', (id) => this.#peerJoined(id, star))
+    star.pubsub.subscribe('peer:left', (id) => this.#peerLeft(id, star))
+    star.pubsub.subscribe('star:joined', this.#starJoined)
+    star.pubsub.subscribe('star:left', this.#starLeft)
+    star.pubsub.subscribe('signal', (message) =>
+      this.#inComingSignal(message, star)
+    )
   }
 
-  starJoined(id) {
+  #starJoined = (id) => {
     if (this.#stars[id]) {
-      this.#stars[id].close()
+      this.#stars[id].close(0)
       delete this.#stars[id]
     }
-    console.log(`star ${id} joined`);
+    console.log(`star ${id} joined`)
   }
 
-  async starLeft(id) {
+  #starLeft = async (id) => {
     if (this.#stars[id]) {
-      this.#stars[id].close()
+      this.#stars[id].close(0)
       delete this.#stars[id]
     }
-    if (this.socketClient?.peerId === id) {
 
-      this.socketClient.unsubscribe('peer:joined', this.peerJoined)
-      this.socketClient.unsubscribe('peer:left', this.peerLeft)
-      this.socketClient.unsubscribe('star:left', this.starLeft)
-      this.socketClient.close()
-      this.socketClient = undefined
-
+    if (Object.keys(this.#stars).length === 0) {
       for (const star of this.starsConfig) {
         try {
-          this.socketClient = await SocketClient(star, this.networkVersion)
-          if (!this.socketClient?.client?._connection.connected) return
-          const id = await this.socketClient.request({url: 'id', params: {from: this.id}})
-          this.#stars[id] = this.socketClient
+          const socketClient = await new SocketRequestClient(
+            star,
+            this.networkVersion
+          ).init()
+          if (!socketClient?.client?.OPEN) return
+          this.#stars[star] = socketClient
 
-          this.socketClient.peerId = id
-
-          const peers = await this.socketClient.peernet.join({id: this.id})
-          this.setupListeners()
-          for (const id of peers) {
-            if (id !== this.id) {
-              if (!this.#connections[id]) {
-                if (id !== this.id) this.#connections[id] = await new Peer({channelName: `${id}:${this.id}`, socketClient: this.socketClient, id: this.id, to: id, peerId: id})
-              }
-            }
-
-          }
+          this.#stars[star].send({
+            url: 'join',
+            params: { peerId: this.peerId, version: this.version }
+          })
+          this.setupStarListeners(socketClient)
         } catch (e) {
-          console.log(e);
-          if (this.starsConfig.indexOf(star) === this.starsConfig.length -1 && !this.socketClient) throw new Error(`No star available to connect`);
+          if (this.starsConfig.indexOf(star) === this.starsConfig.length - 1)
+            throw new Error(`No star available to connect`)
         }
       }
     }
-    globalThis.debug(`star ${id} left`);
+    globalThis.debug(`star ${id} left`)
   }
 
-  peerLeft(peer) {
+  #peerLeft(peer, star) {
     const id = peer.peerId || peer
+
     if (this.#connections[id]) {
-      this.#connections[id].close()
+      this.#connections[id].destroy()
       delete this.#connections[id]
     }
     globalThis.debug(`peer ${id} left`)
   }
 
-  async peerJoined(peer, signal?) {
-    const id = peer.peerId || peer
-    if (this.#connections[id]) {
-      if (this.#connections[id].connected) this.#connections[id].close()
-      delete this.#connections[id]
-    }
-    // RTCPeerConnection
-    this.#connections[id] = await new Peer({initiator: true, channelName: `${this.id}:${id}`, socketClient: this.socketClient, id: this.id, to: id, peerId: id})
-    
-    globalThis.debug(`peer ${id} joined`)
-   
+  #createRTCPeerConnection = (peerId, star, version, initiator = false) => {
+    const peer = new Peer({
+      initiator: initiator,
+      from: this.peerId,
+      to: peerId,
+      version
+    })
+
+    peer.on('signal', (signal) => this.#peerSignal(peer, signal, star))
+
+    peer.on('connect', () => this.#peerConnect(peer))
+    peer.on('close', () => this.#peerClose(peer))
+    peer.on('data', (data) => this.#peerData(peer, data))
+    peer.on('error', (error) => this.#peerError(peer, error))
+
+    this.#connections[peerId] = peer
   }
 
-  removePeer(peer) {
-    const id = peer.peerId || peer
-    if (this.#connections[id]) {
-      this.#connections[id].connected && this.#connections[id].close()
-      delete this.#connections[id]
+  #peerJoined = async ({ peerId, version }, star) => {
+    // check if peer rejoined before the previous connection closed
+    if (this.#connections[peerId]) {
+      if (this.#connections[peerId].connected)
+        this.#connections[peerId].destroy()
+      delete this.#connections[peerId]
     }
-    globalThis.debug(`peer ${id} removed`)
+    // RTCPeerConnection
+    this.#createRTCPeerConnection(peerId, star, version, true)
+
+    globalThis.debug(`peer ${peerId} joined`)
+  }
+
+  #inComingSignal = async ({ from, signal, channelName, version }, star) => {
+    if (version !== this.version) {
+      console.warn(
+        `${from} joined using the wrong version.\nexpected: ${this.version} but got:${version}`
+      )
+
+      return
+    }
+    let peer = this.#connections[from]
+    if (!peer) {
+      this.#createRTCPeerConnection(from, star, version)
+      peer = this.#connections[from]
+    }
+
+    if (String(peer.channelName) !== String(channelName))
+      console.warn(
+        `channelNames don't match: got ${peer.channelName}, expected: ${channelName}`
+      )
+
+    peer.signal(signal)
+  }
+
+  #peerSignal = (peer, signal, star) => {
+    let client = this.#stars[star]
+    if (!client) client = this.#stars[Object.keys(this.#stars)[0]]
+
+    client.send({
+      url: 'signal',
+      params: {
+        from: this.peerId,
+        to: peer.peerId,
+        channelName: peer.channelName,
+        version: this.version,
+        signal
+      }
+    })
+  }
+
+  #peerClose = (peer) => {
+    if (this.#connections[peer.peerId]) {
+      this.#connections[peer.peerId].destroy()
+      delete this.#connections[peer.peerId]
+    }
+
+    globalThis.debug(`closed ${peer.peerId}'s connection`)
+  }
+
+  #peerConnect = (peer) => {
+    globalThis.debug(`${peer.peerId} connected`)
+    globalThis.pubsub.publish('peer:connected', peer.peerId)
+  }
+
+  #noticeMessage = (message, id) => {
+    if (globalThis.pubsub.subscribers[id]) {
+      globalThis.pubsub.publish(id, new Uint8Array(message))
+    } else {
+      globalThis.pubsub.publish('peer:data', new Uint8Array(message))
+    }
+  }
+
+  #peerData = (peer, data) => {
+    const { id, size, chunk } = JSON.parse(new TextDecoder().decode(data))
+    peer.bw.down += size
+    console.log(data)
+    console.log(id, size, chunk)
+
+    if (size <= MAX_MESSAGE_SIZE) {
+      this.#noticeMessage(chunk, id)
+    } else {
+      if (!this.#messagesToHandle[id]) this.#messagesToHandle[id] = []
+      this.#messagesToHandle[id] = [
+        ...this.#messagesToHandle[id],
+        ...Object.values(chunk)
+      ]
+      console.log(this.#messagesToHandle[id].length, size)
+      console.log(this.#messagesToHandle[id].length === Number(size))
+
+      if (this.#messagesToHandle[id].length === Number(size)) {
+        this.#noticeMessage(this.#messagesToHandle[id], id)
+        delete this.#messagesToHandle[id]
+      }
+    }
+  }
+
+  #peerError = (peer, error) => {
+    console.warn(`Connection error: ${error.message}`)
+    peer.destroy()
   }
 
   async close() {
-
-    this.socketClient.unsubscribe('peer:joined', this.peerJoined)
-    this.socketClient.unsubscribe('peer:left', this.peerLeft)
-    this.socketClient.unsubscribe('star:left', this.starLeft)
+    for (const star in this.#stars) {
+      if (this.#stars[star].connectionState() === 'open')
+        await this.#stars[star].send({ url: 'leave', params: this.peerId })
+    }
 
     const promises = [
-      Object.values(this.#connections).map(connection => connection.close()),
-      Object.values(this.#stars).map(connection => connection.close()),
-      this.socketClient.close()
+      Object.values(this.#connections).map((connection) =>
+        connection.destroy()
+      ),
+      Object.values(this.#stars).map((connection) => connection.close(0))
     ]
-    
-    return Promise.allSettled(promises)
-    
-  }
 
+    await Promise.allSettled(promises)
+  }
 }

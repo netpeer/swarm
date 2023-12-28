@@ -1,6 +1,28 @@
-const Client = require('./../dist/commonjs/client');
-const Server = require('./../dist/commonjs/server');
+import { spawn, spawnSync } from 'child_process'
 
-globalThis.DEBUG = true
-const server = new Server().then(() => new Client())
-pubsub.subscribe('peer:data', (data) => console.log(new TextDecoder().decode(data.data)))
+const server = spawn('node ./test/server.js', { shell: true })
+
+server.stderr.on('data', (data) => {
+  console.log(data.toString())
+})
+
+server.stdout.on('data', (data) => {
+  console.log(data.toString())
+})
+
+const client = spawn('node ./test/client.js', { shell: true })
+client.stderr.on('data', (data) => {
+  console.log(data.toString())
+})
+client.stdout.on('data', (data) => {
+  console.log(data.toString())
+})
+setTimeout(() => {
+  const client2 = spawn('node ./test/client-2.js', { shell: true })
+  client2.stderr.on('data', (data) => {
+    console.log(data.toString())
+  })
+  client2.stdout.on('data', (data) => {
+    console.log(data.toString())
+  })
+}, 1000)
