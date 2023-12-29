@@ -1,3 +1,3 @@
-import { Server } from './../exports/index.js'
+import Server from './../exports/server.js'
 
 new Server()

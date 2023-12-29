@@ -14,7 +14,7 @@ try {
 
 export default [
   {
-    input: ['src/index.ts', 'src/server/server.ts', 'src/client/client.ts'],
+    input: ['src/server/server.ts', 'src/client/client.ts'],
     output: [
       {
         dir: './exports',
