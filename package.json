@@ -2,7 +2,10 @@
   "name": "@netpeer/swarm",
   "version": "0.7.2",
   "exports": {
-    ".": "./exports/index.js",
+    ".": {
+      "import": "./exports/index.js",
+      "types": "./exports/index.d.ts"
+    },
     "./client": "./exports/client.js",
     "./server": "./exports/server.js",
     "./browser": "./exports/browser/client.js"
