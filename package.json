@@ -15,6 +15,11 @@
       "types": "./exports/client/client.d.ts"
     }
   },
+  "files": [
+    "exports",
+    "spawn-star.js",
+    "spawn-stars.js"
+  ],
   "type": "module",
   "license": "MIT",
   "private": false,
