@@ -1,4 +1,4 @@
-import { Client } from './../exports/index.js'
+import { Client } from '../exports/client.js'
 globalThis.DEBUG = true
 const client = new Client('peer-1', 'peach', 1, ['ws://localhost:44444'])
 

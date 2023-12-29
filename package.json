@@ -2,13 +2,18 @@
   "name": "@netpeer/swarm",
   "version": "0.7.3",
   "exports": {
-    ".": {
-      "import": "./exports/index.js",
-      "types": "./exports/index.d.ts"
+    "./client": {
+      "import": "./exports/client.js",
+      "types": "./exports/client/client.d.ts"
     },
-    "./client": "./exports/client.js",
-    "./server": "./exports/server.js",
-    "./browser": "./exports/browser/client.js"
+    "./server": {
+      "import": "./exports/server.js",
+      "types": "./exports/server/server.d.ts"
+    },
+    "./browser": {
+      "import": "./exports/browser/client.js",
+      "types": "./exports/client/client.d.ts"
+    }
   },
   "type": "module",
   "license": "MIT",
