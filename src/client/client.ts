@@ -163,7 +163,9 @@ export default class Client {
       version
     })
 
-    peer.on('signal', (signal) => this.#peerSignal(peer, signal, star))
+    peer.on('signal', (signal) =>
+      this.#peerSignal(peer, signal, star, this.version)
+    )
 
     peer.on('connect', () => this.#peerConnect(peer))
     peer.on('close', () => this.#peerClose(peer))
@@ -208,7 +210,7 @@ export default class Client {
     peer.signal(signal)
   }
 
-  #peerSignal = (peer, signal, star) => {
+  #peerSignal = (peer, signal, star, version) => {
     let client = this.#stars[star]
     if (!client) client = this.#stars[Object.keys(this.#stars)[0]]
 
@@ -218,7 +220,7 @@ export default class Client {
         from: this.peerId,
         to: peer.peerId,
         channelName: peer.channelName,
-        version: this.version,
+        version,
         signal
       }
     })
