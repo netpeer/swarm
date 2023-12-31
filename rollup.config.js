@@ -14,7 +14,11 @@ try {
 
 export default [
   {
-    input: ['src/server/server.ts', 'src/client/client.ts'],
+    input: [
+      'src/server/server.ts',
+      'src/client/client.ts',
+      'src/client/peer.ts'
+    ],
     output: [
       {
         dir: './exports',
