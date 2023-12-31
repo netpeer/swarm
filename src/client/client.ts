@@ -8,7 +8,7 @@ export type Options = {
   networkVersion: string // websocket.protocol
   version: string // version string to pass to a star when connecting
   stars: string[]
-  connectEvent: string
+  connectEvent?: string
 }
 
 export default class Client {

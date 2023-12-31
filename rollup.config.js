@@ -25,7 +25,8 @@ export default [
         format: 'es'
       }
     ],
-    plugins: [typescript()]
+    plugins: [typescript()],
+    external: ['websocket']
   },
   {
     input: ['src/client/client.ts'],
@@ -35,7 +36,7 @@ export default [
         format: 'es'
       }
     ],
-    external: ['simple-peer', '@koush/wrtc'],
+    external: ['simple-peer', '@koush/wrtc', 'websocket'],
     plugins: [
       typescript({
         compilerOptions: {
