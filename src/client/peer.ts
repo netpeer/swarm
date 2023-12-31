@@ -107,15 +107,20 @@ export default class Peer extends SimplePeer {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(
         () => reject(`request for ${id} timed out`),
-        10_000
+        30_000
       )
       const onrequest = (data) => {
+        console.log({ data })
+
         clearTimeout(timeout)
         resolve(data)
         globalThis.pubsub.unsubscribe(id, onrequest)
       }
       globalThis.pubsub.subscribe(id, onrequest)
-      this.#chunkit(data, id)
+      console.log({ id })
+      console.log(globalThis.subscribers)
+
+      this.send(data, id)
     })
   }
 }

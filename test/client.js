@@ -12,5 +12,6 @@ const message = new Uint8Array(64 * 1024)
 pubsub.subscribe('peer:connected', (peerId) => {
   console.log('connected' + peerId)
   const peer = client.getPeer(peerId)
+  peer.request(message, 'hello').then(() => console.log('ok'))
   peer.send(message)
 })

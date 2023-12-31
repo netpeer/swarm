@@ -240,20 +240,26 @@ export default class Client {
     globalThis.pubsub.publish(this.#connectEvent, peer.peerId)
   }
 
-  #noticeMessage = (message, id) => {
+  #noticeMessage = (message, id, from, peer) => {
     if (globalThis.pubsub.subscribers[id]) {
       globalThis.pubsub.publish(id, new Uint8Array(message))
     } else {
-      globalThis.pubsub.publish('peer:data', new Uint8Array(message))
+      globalThis.pubsub.publish('peer:data', {
+        data: new Uint8Array(message),
+        id,
+        from,
+        peer
+      })
     }
   }
 
   #peerData = (peer, data) => {
     const { id, size, chunk } = JSON.parse(new TextDecoder().decode(data))
     peer.bw.down += size
+    console.log({ id })
 
     if (size <= MAX_MESSAGE_SIZE) {
-      this.#noticeMessage(chunk, id)
+      this.#noticeMessage(chunk, id, peer.peerId, peer)
     } else {
       if (!this.#messagesToHandle[id]) this.#messagesToHandle[id] = []
       this.#messagesToHandle[id] = [
@@ -262,7 +268,7 @@ export default class Client {
       ]
 
       if (this.#messagesToHandle[id].length === Number(size)) {
-        this.#noticeMessage(this.#messagesToHandle[id], id)
+        this.#noticeMessage(this.#messagesToHandle[id], id, peer.peerId, peer)
         delete this.#messagesToHandle[id]
       }
     }
