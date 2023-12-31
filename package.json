@@ -22,7 +22,8 @@
   "files": [
     "exports",
     "spawn-star.js",
-    "spawn-stars.js"
+    "spawn-stars.js",
+    "run-server.js"
   ],
   "type": "module",
   "license": "MIT",
