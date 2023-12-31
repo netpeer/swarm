@@ -1,6 +1,11 @@
-import { Client } from '../exports/client.js'
+import Client from '../exports/client.js'
 globalThis.DEBUG = true
-const client = new Client('peer-2', 'peach', 1, ['ws://localhost:44444'])
+const client = new Client({
+  peerId: 'peer-2',
+  networkVersion: 'peach',
+  version: 1,
+  stars: ['wss://star.leofcoin.org']
+})
 const message = new Uint8Array(64 * 1024)
 
 pubsub.subscribe('peer:connected', (peerId) => {

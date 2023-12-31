@@ -1,12 +1,21 @@
 import { SocketRequestClient } from 'socket-request-client'
 import Peer from './peer.js'
 import '@vandeurenglenn/debug'
-import { MAX_MESSAGE_SIZE } from './constants.js'
+import { MAX_MESSAGE_SIZE, defaultOptions } from './constants.js'
+
+export type Options = {
+  peerId: string
+  networkVersion: string // websocket.protocol
+  version: string // version string to pass to a star when connecting
+  stars: string[]
+  connectEvent: string
+}
 
 export default class Client {
   #peerId
   #connections: { [index: string]: Peer } = {}
   #stars: { [index: string]: SocketRequestClient['clientConnection'] } = {}
+  #connectEvent = 'peer:connected'
   id: string
   networkVersion: string
   starsConfig: string[]
@@ -31,28 +40,36 @@ export default class Client {
   getPeer(peerId) {
     return this.#connections[peerId]
   }
-
-  constructor(
-    peerId,
-    networkVersion = 'peach',
-    version,
-    stars = ['wss://peach.leofcoin.org']
-  ) {
+  /**
+   *
+   * @param options {object}
+   * @param options.peerId {string}
+   * @param options.networkVersion {string}
+   * @param options.version {string}
+   * @param options.stars {string[]}
+   * @param options.connectEvent {string} defaults to peer:connected, can be renamed to handle different protocols, like peer:discovered (setup peer props before fireing the connect event)
+   */
+  constructor(options: Options) {
+    const { peerId, networkVersion, version, connectEvent, stars } = {
+      ...defaultOptions,
+      ...options
+    }
     this.#peerId = peerId
     this.networkVersion = networkVersion
     this.version = version
+    this.#connectEvent = connectEvent
+    this.starsConfig = stars
 
-    this._init(stars)
+    this._init()
   }
 
-  async _init(stars = []) {
-    this.starsConfig = stars
+  async _init() {
     // reconnectJob()
 
     if (!globalThis.RTCPeerConnection)
       globalThis.wrtc = (await import('@koush/wrtc')).default
 
-    for (const star of stars) {
+    for (const star of this.starsConfig) {
       try {
         const client = new SocketRequestClient(star, this.networkVersion)
         this.#stars[star] = await client.init()
@@ -62,7 +79,10 @@ export default class Client {
           params: { version: this.version, peerId: this.peerId }
         })
       } catch (e) {
-        if (stars.indexOf(star) === stars.length - 1 && !this.socketClient)
+        if (
+          this.starsConfig.indexOf(star) === this.starsConfig.length - 1 &&
+          !this.socketClient
+        )
           throw new Error(`No star available to connect`)
       }
     }
@@ -215,7 +235,7 @@ export default class Client {
 
   #peerConnect = (peer) => {
     globalThis.debug(`${peer.peerId} connected`)
-    globalThis.pubsub.publish('peer:connected', peer.peerId)
+    globalThis.pubsub.publish(this.#connectEvent, peer.peerId)
   }
 
   #noticeMessage = (message, id) => {

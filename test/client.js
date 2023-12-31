@@ -1,6 +1,14 @@
-import { Client } from '../exports/client.js'
+import Client from '../exports/client.js'
 globalThis.DEBUG = true
-const client = new Client('peer-1', 'peach', 1, ['ws://localhost:44444'])
+const client = new Client({
+  peerId: 'peer-1',
+  networkVersion: 'peach',
+  version: 1,
+  stars: [
+    // 'ws://localhost:44444',
+    'wss://star.leofcoin.org'
+  ]
+})
 
 const message = new Uint8Array(64 * 1024)
 
