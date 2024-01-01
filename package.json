@@ -19,6 +19,7 @@
       "types": "./exports/client/client.d.ts"
     }
   },
+  "browser": "./exports/browser/client.js",
   "files": [
     "exports",
     "spawn-star.js",
