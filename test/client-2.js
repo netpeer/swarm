@@ -7,7 +7,8 @@ const client = new Client({
   // stars: ['ws://localhost:44444']
 })
 const message = new Uint8Array(64 * 1024)
-pubsub.subscribe('hello', ({ data, peer, from, id }) => {
+pubsub.subscribe('hello', (data) => {
+  const peer = client.getPeer('peer-1')
   peer.send('hi', 'hello')
 })
 

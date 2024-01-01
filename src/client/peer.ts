@@ -109,7 +109,7 @@ export default class Peer extends SimplePeer {
         () => reject(`request for ${id} timed out`),
         30_000
       )
-      const onrequest = (data) => {
+      const onrequest = ({ data }) => {
         clearTimeout(timeout)
         resolve(data)
         globalThis.pubsub.unsubscribe(id, onrequest)
