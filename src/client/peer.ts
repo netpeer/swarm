@@ -110,16 +110,11 @@ export default class Peer extends SimplePeer {
         30_000
       )
       const onrequest = (data) => {
-        console.log({ data })
-
         clearTimeout(timeout)
         resolve(data)
         globalThis.pubsub.unsubscribe(id, onrequest)
       }
       globalThis.pubsub.subscribe(id, onrequest)
-      console.log({ id })
-      console.log(globalThis.subscribers)
-
       this.send(data, id)
     })
   }
