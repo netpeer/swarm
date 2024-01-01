@@ -145,7 +145,7 @@ export default class Client {
     globalThis.debug(`star ${id} left`)
   }
 
-  #peerLeft(peer, star) {
+  #peerLeft = (peer, star) => {
     const id = peer.peerId || peer
 
     if (this.#connections[id]) {
@@ -178,8 +178,7 @@ export default class Client {
   #peerJoined = async ({ peerId, version }, star) => {
     // check if peer rejoined before the previous connection closed
     if (this.#connections[peerId]) {
-      if (this.#connections[peerId].connected)
-        this.#connections[peerId].destroy()
+      this.#connections[peerId].destroy()
       delete this.#connections[peerId]
     }
     // RTCPeerConnection
@@ -228,7 +227,7 @@ export default class Client {
 
   #peerClose = (peer) => {
     if (this.#connections[peer.peerId]) {
-      this.#connections[peer.peerId].destroy()
+      peer.destroy()
       delete this.#connections[peer.peerId]
     }
 
@@ -237,7 +236,7 @@ export default class Client {
 
   #peerConnect = (peer) => {
     globalThis.debug(`${peer.peerId} connected`)
-    globalThis.pubsub.publish(this.#connectEvent, peer.peerId)
+    globalThis.pubsub.publishVerbose(this.#connectEvent, peer.peerId)
   }
 
   #noticeMessage = (message, id, from, peer) => {
@@ -296,6 +295,6 @@ export default class Client {
       Object.values(this.#stars).map((connection) => connection.close(0))
     ]
 
-    await Promise.allSettled(promises)
+    return Promise.allSettled(promises)
   }
 }
