@@ -1,4 +1,3 @@
-import SimplePeer from 'simple-peer'
 import { MAX_MESSAGE_SIZE } from './constants.js'
 
 const iceServers = [
@@ -19,7 +18,7 @@ const iceServers = [
     credential: 'openrelayproject'
   }
 ]
-
+const SimplePeer = (await import('simple-peer')).default
 export default class Peer extends SimplePeer {
   peerId: string
   channelName: string

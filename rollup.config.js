@@ -49,7 +49,7 @@ export default [
         mainFields: ['module']
       }),
       modify({
-        "import SimplePeer from 'simple-peer'": (
+        "const SimplePeer = (await import('simple-peer')).default;": (
           await readFile('./node_modules/simple-peer/simplepeer.min.js')
         ).toString()
       })
