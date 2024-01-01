@@ -242,7 +242,12 @@ export default class Client {
 
   #noticeMessage = (message, id, from, peer) => {
     if (globalThis.pubsub.subscribers[id]) {
-      globalThis.pubsub.publish(id, new Uint8Array(message))
+      globalThis.pubsub.publish(id, {
+        data: new Uint8Array(message),
+        id,
+        from,
+        peer
+      })
     } else {
       globalThis.pubsub.publish('peer:data', {
         data: new Uint8Array(message),
