@@ -86,14 +86,14 @@ export default class Client {
           throw new Error(`No star available to connect`)
       }
     }
-    if (globalThis.navigator) {
-      globalThis.addEventListener('beforeunload', async () => this.close())
-    } else {
+    if (globalThis.process?.versions?.node) {
       process.on('SIGINT', async () => {
         process.stdin.resume()
         await this.close()
         process.exit()
       })
+    } else {
+      globalThis.addEventListener('beforeunload', async () => this.close())
     }
   }
 
