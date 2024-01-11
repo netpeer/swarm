@@ -28,6 +28,10 @@ export default class Peer extends SimplePeer {
     down: number
   } = { up: 0, down: 0 }
 
+  get connected() {
+    return super.connected
+  }
+
   constructor(options: {
     from: string
     to: string
