@@ -3,6 +3,8 @@ import Peer from './peer.js'
 import '@vandeurenglenn/debug'
 import { MAX_MESSAGE_SIZE, defaultOptions } from './constants.js'
 
+const debug = globalThis.createDebugger('@peernet/swarm/client')
+
 export type Options = {
   peerId: string
   networkVersion: string // websocket.protocol
@@ -142,7 +144,7 @@ export default class Client {
         }
       }
     }
-    globalThis.debug(`star ${id} left`)
+    debug(`star ${id} left`)
   }
 
   #peerLeft = (peer, star) => {
@@ -152,7 +154,7 @@ export default class Client {
       this.#connections[id].destroy()
       delete this.#connections[id]
     }
-    globalThis.debug(`peer ${id} left`)
+    debug(`peer ${id} left`)
   }
 
   #createRTCPeerConnection = (peerId, star, version, initiator = false) => {
@@ -184,7 +186,7 @@ export default class Client {
     // RTCPeerConnection
     this.#createRTCPeerConnection(peerId, star, version, true)
 
-    globalThis.debug(`peer ${peerId} joined`)
+    debug(`peer ${peerId} joined`)
   }
 
   #inComingSignal = async ({ from, signal, channelName, version }, star) => {
@@ -231,11 +233,11 @@ export default class Client {
       delete this.#connections[peer.peerId]
     }
 
-    globalThis.debug(`closed ${peer.peerId}'s connection`)
+    debug(`closed ${peer.peerId}'s connection`)
   }
 
   #peerConnect = (peer) => {
-    globalThis.debug(`${peer.peerId} connected`)
+    debug(`${peer.peerId} connected`)
     globalThis.pubsub.publishVerbose(this.#connectEvent, peer.peerId)
   }
 

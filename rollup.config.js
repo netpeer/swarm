@@ -25,6 +25,14 @@ export default [
         format: 'es'
       }
     ],
+    external: [
+      'socket-request-server',
+      'socket-request-client',
+      'simple-peer',
+      '@koush/wrtc',
+      '@vandeurenglenn/debug',
+      'websocket'
+    ],
     plugins: [typescript()],
     external: ['websocket']
   },
