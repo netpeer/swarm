@@ -30,16 +30,16 @@ export default class Server {
     { peerId, version }: { peerId: string; version: string },
     { connection }: { connection: WebSocket }
   ) => {
-    this.#broadcast('peer:joined', { peerId, version })
     this.peers.set(peerId, connection)
+    this.#broadcast('peer:joined', { peerId, version })
   }
 
   #leave = (peerId: string) => {
-    this.#broadcast('peer:left', peerId)
     // 1000 means normal close
     const connection = this.peers.get(peerId)
     connection.close(1000, `${peerId} left`)
     this.peers.delete(peerId)
+    this.#broadcast('peer:left', peerId)
   }
 
   #signal = ({ to, from, channelName, signal, version }, connection) => {
