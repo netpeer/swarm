@@ -3,7 +3,7 @@ import Peer from './peer.js'
 import '@vandeurenglenn/debug'
 import { MAX_MESSAGE_SIZE, defaultOptions } from './constants.js'
 
-const debug = globalThis.createDebugger('netpeer/swarm/client')
+const debug = globalThis.createDebugger('@netpeer/swarm/client')
 
 export type Options = {
   peerId: string
