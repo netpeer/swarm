@@ -1,6 +1,6 @@
 {
   "name": "@netpeer/swarm",
-  "version": "0.8.15",
+  "version": "0.8.16",
   "exports": {
     "./client": {
       "import": "./exports/client.js",
