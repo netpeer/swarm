@@ -18,7 +18,9 @@ const iceServers = [
     credential: 'openrelayproject'
   }
 ]
+
 const SimplePeer = (await import('simple-peer')).default
+
 export default class Peer extends SimplePeer {
   peerId: string
   channelName: string
