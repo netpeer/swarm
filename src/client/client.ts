@@ -183,8 +183,8 @@ export default class Client {
       this.#connections[peerId].destroy()
       delete this.#connections[peerId]
     }
-    // RTCPeerConnection
-    this.#createRTCPeerConnection(peerId, star, version, true)
+    if (this.peerId !== peerId)
+      this.#createRTCPeerConnection(peerId, star, version, true)
 
     debug(`peer ${peerId} joined`)
   }
@@ -194,7 +194,10 @@ export default class Client {
       console.warn(
         `${from} joined using the wrong version.\nexpected: ${this.version} but got:${version}`
       )
-
+      return
+    }
+    if (from === this.peerId) {
+      console.warn(`${from} tried to connect to itself.`)
       return
     }
     let peer = this.#connections[from]
