@@ -123,4 +123,13 @@ export default class Peer extends SimplePeer {
       this.send(data, id)
     })
   }
+
+  toJSON() {
+    return {
+      peerId: this.peerId,
+      channelName: this.channelName,
+      version: this.version,
+      bw: this.bw
+    }
+  }
 }
