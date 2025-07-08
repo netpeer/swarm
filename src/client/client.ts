@@ -206,10 +206,24 @@ export default class Client {
       peer = this.#connections[from]
     }
 
-    if (String(peer.channelName) !== String(channelName))
+    if (peer.connected) {
+      debug(`peer ${from} already connected`)
+      return
+    }
+
+    if (String(peer.channelName) !== String(channelName)) {
       console.warn(
-        `channelNames don't match: got ${peer.channelName}, expected: ${channelName}`
+        `channelNames don't match: got ${peer.channelName}, expected: ${channelName}. Recreating connection.`
       )
+
+      // Destroy the existing peer connection
+      peer.destroy()
+      delete this.#connections[from]
+
+      // Create a new peer connection with the correct configuration
+      this.#createRTCPeerConnection(from, star, version, false)
+      peer = this.#connections[from]
+    }
 
     peer.signal(signal)
   }
