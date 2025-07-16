@@ -157,6 +157,26 @@ export default class Client {
     debug(`peer ${id} left`)
   }
 
+  connect(peerId, star, initiator = true) {
+    if (this.#connections[peerId]) {
+      debug(`peer ${peerId} already connected`)
+      return
+    }
+    if (this.#stars[star]?.connectionState() !== 'open') {
+      console.warn(
+        `Star ${star} is not connected, cannot reconnect to peer ${peerId}`
+      )
+      return
+    }
+    this.#createRTCPeerConnection(peerId, star, this.version, initiator)
+  }
+
+  reconnect(peerId, star, initiator = true) {
+    delete this.#connections[peerId]
+    debug(`reconnecting to peer ${peerId}`)
+    return this.connect(peerId, star, initiator)
+  }
+
   #createRTCPeerConnection = (peerId, star, version, initiator = false) => {
     const peer = new Peer({
       initiator: initiator,
