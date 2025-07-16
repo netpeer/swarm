@@ -213,16 +213,16 @@ export default class Client {
 
     if (String(peer.channelName) !== String(channelName)) {
       console.warn(
-        `channelNames don't match: got ${peer.channelName}, expected: ${channelName}. Recreating connection.`
+        `channelNames don't match: got ${peer.channelName}, expected: ${channelName}.`
       )
 
       // Destroy the existing peer connection
-      peer.destroy()
-      delete this.#connections[from]
+      // peer.destroy()
+      // delete this.#connections[from]
 
-      // Create a new peer connection with the correct configuration
-      this.#createRTCPeerConnection(from, star, version, false)
-      peer = this.#connections[from]
+      // // Create a new peer connection with the correct configuration
+      // this.#createRTCPeerConnection(from, star, version, false)
+      // peer = this.#connections[from]
     }
 
     peer.signal(signal)
