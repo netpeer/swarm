@@ -95,7 +95,7 @@ export default class Client {
         process.exit()
       })
     } else {
-      globalThis.addEventListener('beforeunload', async () => this.close())
+      globalThis.addEventListener('beforeunload', this.close.bind(this))
     }
   }
 
