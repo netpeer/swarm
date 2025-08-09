@@ -9,7 +9,14 @@ export default class Server {
         join: this.#join,
         leave: this.#leave,
         signal: this.#signal,
-        peers: ({ connection }) => connection.send(this.peers.keys())
+        peers: ({ connection }) =>
+          connection.send(
+            JSON.stringify({
+              url: 'peers',
+              status: 200,
+              value: [...this.peers.keys()]
+            })
+          )
         // dial({ from, to }) {
         //   const toPeer = this.peers.get(to)
         //   const fromPeer = this.peers.get(from)
