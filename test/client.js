@@ -9,9 +9,13 @@ const client = new Client({
 
 const message = new Uint8Array(64 * 1024)
 
-pubsub.subscribe('peer:connected', (peerId) => {
-  console.log('connected' + peerId)
+pubsub.subscribe('peer:connected', async (peerId) => {
+  console.log('connected: ' + peerId)
   const peer = client.getPeer(peerId)
-  peer.request(message, 'hello').then(() => console.log({ ok: 'ok' }))
+  await peer.request(message, 'hello')
+  await client.close()
+  setTimeout(() => {
+    client._init()
+  }, 10_000)
   // peer.send(message)
 })

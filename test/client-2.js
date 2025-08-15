@@ -18,6 +18,6 @@ pubsub.subscribe('peer:data', (data) => {
 pubsub.subscribe('peer:connected', (peerId) => {
   console.log('connected: ' + peerId)
   const peer = client.getPeer(peerId)
-  // console.log(peer.version)
+  console.log({ peerVersion: peer.version })
   // peer.send(message)
 })

@@ -11,13 +11,27 @@ export type Options = {
   version: string // version string to pass to a star when connecting
   stars: string[]
   connectEvent?: string
+  attempts?: number
+  // optional retry/backoff for star connections
+  retry?: {
+    retries?: number
+    factor?: number
+    minTimeout?: number
+    maxTimeout?: number
+  }
 }
 
 export default class Client {
   #peerId
   #connections: { [index: string]: Peer } = {}
   #stars: { [index: string]: SocketRequestClient['clientConnection'] } = {}
+  #starListeners: {
+    [index: string]: { topic: string; handler: (...args: any[]) => void }[]
+  } = {}
+  #handlersSetup = false
+  #reinitLock: Promise<void> | null = null
   #connectEvent = 'peer:connected'
+  #retryOptions = { retries: 5, factor: 2, minTimeout: 1000, maxTimeout: 30000 }
   id: string
   networkVersion: string
   starsConfig: string[]
@@ -61,8 +75,82 @@ export default class Client {
     this.version = version
     this.#connectEvent = connectEvent
     this.starsConfig = stars
+    if (options?.retry)
+      this.#retryOptions = { ...this.#retryOptions, ...options.retry }
 
     this._init()
+  }
+
+  /**
+   * Safely reinitialize the client (used after system resume/sleep).
+   * It closes existing connections and reconnects to configured stars.
+   */
+  async reinit() {
+    // avoid concurrent reinit runs
+    if (this.#reinitLock) return this.#reinitLock
+    this.#reinitLock = (async () => {
+      debug('reinit: start')
+      try {
+        await this.close()
+        // clear internal maps so setupStar starts fresh
+        this.#stars = {}
+        this.#connections = {}
+
+        for (const star of this.starsConfig) {
+          try {
+            await this.setupStar(star)
+          } catch (e) {
+            // If last star fails and none connected, surface error
+            if (
+              this.starsConfig.indexOf(star) === this.starsConfig.length - 1 &&
+              Object.keys(this.#stars).length === 0
+            )
+              throw new Error(`No star available to connect`)
+          }
+        }
+      } finally {
+        debug('reinit: done')
+        this.#reinitLock = null
+      }
+    })()
+
+    return this.#reinitLock
+  }
+
+  async setupStar(star) {
+    const { retries, factor, minTimeout, maxTimeout } = this.#retryOptions
+
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+    let attempt = 0
+    let lastErr
+    while (attempt <= retries) {
+      try {
+        const client = new SocketRequestClient(star, this.networkVersion)
+        this.#stars[star] = await client.init()
+        this.setupStarListeners(this.#stars[star], star)
+        this.#stars[star].send({
+          url: 'join',
+          params: { version: this.version, peerId: this.peerId }
+        })
+        return this.#stars[star]
+      } catch (e) {
+        lastErr = e
+        attempt += 1
+        if (attempt > retries) break
+        const delay = Math.min(
+          maxTimeout,
+          Math.round(minTimeout * Math.pow(factor, attempt - 1))
+        )
+        debug(
+          `setupStar ${star} failed, retrying in ${delay}ms (attempt ${attempt})`
+        )
+        // eslint-disable-next-line no-await-in-loop
+        await sleep(delay)
+      }
+    }
+
+    throw lastErr
   }
 
   async _init() {
@@ -73,13 +161,7 @@ export default class Client {
 
     for (const star of this.starsConfig) {
       try {
-        const client = new SocketRequestClient(star, this.networkVersion)
-        this.#stars[star] = await client.init()
-        this.setupStarListeners(this.#stars[star])
-        this.#stars[star].send({
-          url: 'join',
-          params: { version: this.version, peerId: this.peerId }
-        })
+        await this.setupStar(star)
       } catch (e) {
         if (
           this.starsConfig.indexOf(star) === this.starsConfig.length - 1 &&
@@ -97,16 +179,77 @@ export default class Client {
     } else {
       globalThis.addEventListener('beforeunload', this.close.bind(this))
     }
+    // Setup resume/sleep detection so we can reinit connections after wake
+    this._setupResumeHandler()
   }
 
-  setupStarListeners(star) {
-    star.pubsub.subscribe('peer:joined', (id) => this.#peerJoined(id, star))
-    star.pubsub.subscribe('peer:left', (id) => this.#peerLeft(id, star))
-    star.pubsub.subscribe('star:joined', this.#starJoined)
-    star.pubsub.subscribe('star:left', this.#starLeft)
-    star.pubsub.subscribe('signal', (message) =>
-      this.#inComingSignal(message, star)
-    )
+  setupStarListeners(starConnection, starId) {
+    // create stable references to handlers so we can unsubscribe later
+    const onPeerJoined = (id) => this.#peerJoined(id, starConnection)
+    const onPeerLeft = (id) => this.#peerLeft(id, starConnection)
+    const onStarJoined = this.#starJoined
+    const onStarLeft = this.#starLeft
+    const onSignal = (message) => this.#inComingSignal(message, starConnection)
+
+    starConnection.pubsub.subscribe('peer:joined', onPeerJoined)
+    starConnection.pubsub.subscribe('peer:left', onPeerLeft)
+    starConnection.pubsub.subscribe('star:joined', onStarJoined)
+    starConnection.pubsub.subscribe('star:left', onStarLeft)
+    starConnection.pubsub.subscribe('signal', onSignal)
+
+    this.#starListeners[starId] = [
+      { topic: 'peer:joined', handler: onPeerJoined },
+      { topic: 'peer:left', handler: onPeerLeft },
+      { topic: 'star:joined', handler: onStarJoined },
+      { topic: 'star:left', handler: onStarLeft },
+      { topic: 'signal', handler: onSignal }
+    ]
+  }
+
+  _setupResumeHandler() {
+    if (this.#handlersSetup) return
+    this.#handlersSetup = true
+
+    const THRESHOLD = 10 * 1000 // 10s gap indicates sleep/wake
+    let last = Date.now()
+
+    const check = () => {
+      const now = Date.now()
+      const delta = now - last
+      last = now
+      if (delta > THRESHOLD) {
+        debug(`resume detected (gap ${delta}ms)`)
+        // fire reinit but don't await here
+        ;(this as any).reinit().catch((e) => debug('reinit error', e))
+      }
+    }
+
+    // Start interval checker
+    const iv = setInterval(check, 2000)
+
+    // Browser specific events
+    if (typeof document !== 'undefined' && document.addEventListener) {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          // small delay to let timers update
+          setTimeout(() => check(), 50)
+        }
+      })
+      window.addEventListener('online', () => setTimeout(() => check(), 50))
+    }
+
+    // Node: listen for SIGCONT (process continued) as well
+    if (globalThis.process?.on) {
+      try {
+        process.on('SIGCONT', () => setTimeout(() => check(), 50))
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    // keep reference so it can be cleared on close
+    // @ts-ignore
+    this._resumeInterval = iv
   }
 
   #starJoined = (id) => {
@@ -123,22 +266,15 @@ export default class Client {
       delete this.#stars[id]
     }
 
+    // if we lost all stars, try to reconnect to configured stars with backoff
     if (Object.keys(this.#stars).length === 0) {
       for (const star of this.starsConfig) {
         try {
-          const socketClient = await new SocketRequestClient(
-            star,
-            this.networkVersion
-          ).init()
-          if (!socketClient?.client?.OPEN) return
-          this.#stars[star] = socketClient
-
-          this.#stars[star].send({
-            url: 'join',
-            params: { peerId: this.peerId, version: this.version }
-          })
-          this.setupStarListeners(socketClient)
+          await this.setupStar(star)
+          // stop at first success
+          return
         } catch (e) {
+          debug(`reconnect star ${star} failed: ${e.message || e}`)
           if (this.starsConfig.indexOf(star) === this.starsConfig.length - 1)
             throw new Error(`No star available to connect`)
         }
@@ -240,7 +376,7 @@ export default class Client {
       // peer.destroy()
       // delete this.#connections[from]
 
-      // // Create a new peer connection with the correct configuration
+      // // // Create a new peer connection with the correct configuration
       // this.#createRTCPeerConnection(from, star, version, false)
       // peer = this.#connections[from]
     }
@@ -264,7 +400,7 @@ export default class Client {
     })
   }
 
-  #peerClose = (peer) => {
+  #peerClose = (peer: Peer) => {
     if (this.#connections[peer.peerId]) {
       peer.destroy()
       delete this.#connections[peer.peerId]
@@ -322,18 +458,52 @@ export default class Client {
   }
 
   async close() {
+    // clear resume interval if set
+    // @ts-ignore
+    if (this._resumeInterval) {
+      // @ts-ignore
+      clearInterval(this._resumeInterval)
+      // @ts-ignore
+      this._resumeInterval = null
+    }
     for (const star in this.#stars) {
-      if (this.#stars[star].connectionState() === 'open')
+      if (this.#stars[star].connectionState() === 'open') {
         await this.#stars[star].send({ url: 'leave', params: this.peerId })
+        // unsubscribe handlers we registered earlier
+        const listeners = this.#starListeners[star]
+        if (listeners && listeners.length) {
+          for (const { topic, handler } of listeners) {
+            try {
+              this.#stars[star].pubsub.unsubscribe(topic, handler)
+            } catch (e) {
+              // ignore
+            }
+          }
+        }
+      }
     }
 
-    const promises = [
-      Object.values(this.#connections).map((connection) =>
-        connection.destroy()
-      ),
-      Object.values(this.#stars).map((connection) => connection.close(0))
-    ]
+    // Ensure we wait for all peer and star close/destroy operations.
+    // Previous code passed an array of arrays to Promise.allSettled which
+    // resolves immediately; flatten into a single array of promises (or
+    // values) so we actually wait for async close operations.
+    const peerClosers = Object.values(this.#connections).map((connection) => {
+      try {
+        // destroy() may be sync or return a promise
+        return connection.destroy()
+      } catch (e) {
+        return undefined
+      }
+    })
 
-    return Promise.allSettled(promises)
+    const starClosers = Object.values(this.#stars).map((connection) => {
+      try {
+        return connection.close(0)
+      } catch (e) {
+        return undefined
+      }
+    })
+
+    return Promise.allSettled([...peerClosers, ...starClosers])
   }
 }
