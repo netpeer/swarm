@@ -44,6 +44,10 @@ export default class Server {
   #leave = (peerId: string) => {
     // 1000 means normal close
     const connection = this.peers.get(peerId)
+    if (!connection) {
+      console.warn(`No connection found for peer ${peerId}`)
+      return
+    }
     connection.close(1000, `${peerId} left`)
     this.peers.delete(peerId)
     this.#broadcast('peer:left', peerId)
@@ -51,7 +55,10 @@ export default class Server {
 
   #signal = ({ to, from, channelName, signal, version }, connection) => {
     const toPeer = this.peers.get(to)
-
+    if (!toPeer) {
+      console.warn(`No peer found with id ${to}`)
+      return
+    }
     toPeer.send(
       JSON.stringify({
         url: 'signal',
