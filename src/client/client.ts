@@ -379,6 +379,7 @@ export default class Client {
       // // // Create a new peer connection with the correct configuration
       // this.#createRTCPeerConnection(from, star, version, false)
       // peer = this.#connections[from]
+      return
     }
 
     peer.signal(signal)
