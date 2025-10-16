@@ -1,5 +1,6 @@
 import server from 'socket-request-server'
-
+import { createDebugger } from '@vandeurenglenn/debug'
+const debug = createDebugger('@netpeer/swarm/server')
 export default class Server {
   peers: Map<string, WebSocket> = new Map()
   constructor(port = 44444, networkVersion = 'peach') {
@@ -39,6 +40,7 @@ export default class Server {
   ) => {
     this.peers.set(peerId, connection)
     this.#broadcast('peer:joined', { peerId, version })
+    debug(`Peer joined: ${peerId} (version: ${version})`)
   }
 
   #leave = (peerId: string) => {
@@ -51,6 +53,7 @@ export default class Server {
     connection.close(1000, `${peerId} left`)
     this.peers.delete(peerId)
     this.#broadcast('peer:left', peerId)
+    debug(`Peer left: ${peerId}`)
   }
 
   #signal = ({ to, from, channelName, signal, version }, connection) => {
@@ -66,6 +69,7 @@ export default class Server {
         value: { channelName, signal, from, version }
       })
     )
+    debug(`Signal sent from ${from} to ${to} (version: ${version})`)
   }
 
   #broadcast(url: string, value: any) {
@@ -78,6 +82,7 @@ export default class Server {
         })
       )
     }
+    debug(`Broadcasted ${url} to ${this.peers.size} peers`)
   }
 
   // #sendToPeer = ({ send }: WebSocket, url: string, value: any) =>
