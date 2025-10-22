@@ -307,7 +307,7 @@ export default class Client {
     this.#createRTCPeerConnection(peerId, star, this.version, initiator)
   }
 
-  reconnect(peerId, star, initiator = true) {
+  reconnect(peerId, star, initiator = false) {
     delete this.#connections[peerId]
     debug(`reconnecting to peer ${peerId}`)
     return this.connect(peerId, star, initiator)
