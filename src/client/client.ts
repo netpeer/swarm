@@ -484,10 +484,6 @@ export default class Client {
       }
     }
 
-    // Ensure we wait for all peer and star close/destroy operations.
-    // Previous code passed an array of arrays to Promise.allSettled which
-    // resolves immediately; flatten into a single array of promises (or
-    // values) so we actually wait for async close operations.
     const peerClosers = Object.values(this.#connections).map((connection) => {
       try {
         // destroy() may be sync or return a promise
