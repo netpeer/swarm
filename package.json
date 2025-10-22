@@ -43,7 +43,7 @@
     "@rollup/plugin-node-resolve": "^16.0.3",
     "@rollup/plugin-typescript": "^12.1.4",
     "@types/simple-peer": "^9.11.8",
-    "rollup": "^4.52.4",
+    "rollup": "^4.52.5",
     "rollup-plugin-modify": "^3.0.0",
     "tslib": "^2.8.1"
   },
