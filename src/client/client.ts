@@ -293,7 +293,7 @@ export default class Client {
     debug(`peer ${id} left`)
   }
 
-  connect(peerId, star) {
+  connect(peerId, star, initiator = true) {
     if (this.#connections[peerId]) {
       debug(`peer ${peerId} already connected`)
       return
@@ -304,17 +304,18 @@ export default class Client {
       )
       return
     }
-    this.#createRTCPeerConnection(peerId, star, this.version)
+    this.#createRTCPeerConnection(peerId, star, this.version, initiator)
   }
 
-  reconnect(peerId, star) {
+  reconnect(peerId, star, initiator = true) {
     delete this.#connections[peerId]
     debug(`reconnecting to peer ${peerId}`)
-    return this.connect(peerId, star)
+    return this.connect(peerId, star, initiator)
   }
 
-  #createRTCPeerConnection = (peerId, star, version) => {
+  #createRTCPeerConnection = (peerId, star, version, initiator = false) => {
     const peer = new Peer({
+      initiator: initiator,
       from: this.peerId,
       to: peerId,
       version
@@ -339,7 +340,7 @@ export default class Client {
       delete this.#connections[peerId]
     }
     if (this.peerId !== peerId)
-      this.#createRTCPeerConnection(peerId, star, version)
+      this.#createRTCPeerConnection(peerId, star, version, true)
 
     debug(`peer ${peerId} joined`)
   }

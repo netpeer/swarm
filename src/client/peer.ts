@@ -30,25 +30,27 @@ export default class Peer extends SimplePeer {
     down: number
   } = { up: 0, down: 0 }
 
+  get connected() {
+    return super.connected
+  }
+
   constructor(options: {
     from: string
     to: string
     version: string | number
+    initiator?: boolean
     trickle?: boolean
     wrtc?
     config?
   }) {
-    const { from, to, trickle, config, version } = options
+    const { from, to, initiator, trickle, config, version } = options
 
-    // Canonical initiator and channel label based on sorted IDs
-    const [a, b] = [from, to].sort()
-    const channelName = `${a}:${b}`
-    const initiator = from === a
+    const channelName = initiator ? `${from}:${to}` : `${to}:${from}`
 
     super({
       channelName,
       initiator,
-      trickle: trickle ?? true,
+      trickle: trickle || true,
       config: { iceServers, ...config },
       wrtc: globalThis.wrtc
     })
