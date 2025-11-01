@@ -2,24 +2,9 @@ import { SocketRequestClient } from 'socket-request-client'
 import Peer from './peer.js'
 import '@vandeurenglenn/debug'
 import { MAX_MESSAGE_SIZE, defaultOptions } from './constants.js'
+import { Options } from '../types.js'
 
 const debug = globalThis.createDebugger('@netpeer/swarm/client')
-
-export type Options = {
-  peerId: string
-  networkVersion: string // websocket.protocol
-  version: string // version string to pass to a star when connecting
-  stars: string[]
-  connectEvent?: string
-  attempts?: number
-  // optional retry/backoff for star connections
-  retry?: {
-    retries?: number
-    factor?: number
-    minTimeout?: number
-    maxTimeout?: number
-  }
-}
 
 export default class Client {
   #peerId
@@ -55,15 +40,7 @@ export default class Client {
   getPeer(peerId) {
     return this.#connections[peerId]
   }
-  /**
-   *
-   * @param options {object}
-   * @param options.peerId {string}
-   * @param options.networkVersion {string}
-   * @param options.version {string}
-   * @param options.stars {string[]}
-   * @param options.connectEvent {string} defaults to peer:connected, can be renamed to handle different protocols, like peer:discovered (setup peer props before fireing the connect event)
-   */
+
   constructor(options: Options) {
     const { peerId, networkVersion, version, connectEvent, stars } = {
       ...defaultOptions,
@@ -91,7 +68,6 @@ export default class Client {
       debug('reinit: start')
       try {
         await this.close()
-        // clear internal maps so setupStar starts fresh
         this.#stars = {}
         this.#connections = {}
 
@@ -100,10 +76,7 @@ export default class Client {
             await this.setupStar(star)
           } catch (e) {
             // If last star fails and none connected, surface error
-            if (
-              this.starsConfig.indexOf(star) === this.starsConfig.length - 1 &&
-              Object.keys(this.#stars).length === 0
-            )
+            if (Object.keys(this.#stars).length === 0)
               throw new Error(`No star available to connect`)
           }
         }
@@ -153,8 +126,6 @@ export default class Client {
   }
 
   async _init() {
-    // reconnectJob()
-
     if (!globalThis.RTCPeerConnection)
       globalThis.wrtc = (await import('@koush/wrtc')).default
 
@@ -318,6 +289,8 @@ export default class Client {
       return
     }
 
+    // peer.channels[channelName]
+
     if (String(peer.channelName) !== String(channelName)) {
       console.warn(
         `channelNames don't match: got ${peer.channelName}, expected: ${channelName}.`
@@ -411,28 +384,27 @@ export default class Client {
   }
 
   async close() {
-    // clear resume interval if set
-    // @ts-ignore
-    if (this._resumeInterval) {
-      // @ts-ignore
-      clearInterval(this._resumeInterval)
-      // @ts-ignore
-      this._resumeInterval = null
+    for (const peerId in this.#connections) {
+      const peer = this.#connections[peerId]
+      if (peer) {
+        peer.destroy()
+        delete this.#connections[peerId]
+      }
     }
     for (const star in this.#stars) {
-      if (this.#stars[star].connectionState() === 'open') {
-        await this.#stars[star].send({ url: 'leave', params: this.peerId })
-        // unsubscribe handlers we registered earlier
-        const listeners = this.#starListeners[star]
-        if (listeners && listeners.length) {
-          for (const { topic, handler } of listeners) {
-            try {
-              this.#stars[star].pubsub.unsubscribe(topic, handler)
-            } catch (e) {
-              // ignore
-            }
+      // unsubscribe handlers we registered earlier
+      const listeners = this.#starListeners[star]
+      if (listeners && listeners.length) {
+        for (const { topic, handler } of listeners) {
+          try {
+            this.#stars[star].pubsub.unsubscribe(topic, handler)
+          } catch (e) {
+            // ignore
           }
         }
+      }
+      if (this.#stars[star].connectionState() === 'open') {
+        await this.#stars[star].send({ url: 'leave', params: this.peerId })
       }
     }
 
