@@ -43,13 +43,13 @@
     "@rollup/plugin-node-resolve": "^16.0.3",
     "@rollup/plugin-typescript": "^12.3.0",
     "@types/simple-peer": "^9.11.9",
-    "rollup": "^4.52.5",
+    "rollup": "^4.53.4",
     "rollup-plugin-modify": "^3.0.0",
     "tslib": "^2.8.1"
   },
   "dependencies": {
     "@koush/wrtc": "^0.5.3",
-    "@vandeurenglenn/debug": "^1.2.6",
+    "@vandeurenglenn/debug": "^1.2.7",
     "@vandeurenglenn/little-pubsub": "^1.5.1",
     "simple-peer": "^9.11.1",
     "socket-request-client": "^2.1.2",
