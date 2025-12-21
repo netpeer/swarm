@@ -4,6 +4,19 @@ import '@vandeurenglenn/debug'
 import { MAX_MESSAGE_SIZE, defaultOptions } from './constants.js'
 import { Options } from '../types.js'
 import { createDebugger } from '@vandeurenglenn/debug'
+import { inflate } from 'pako'
+
+// Simple CRC32 implementation
+const crc32 = (data: Uint8Array): number => {
+  let crc = 0xffffffff
+  for (let i = 0; i < data.length; i++) {
+    crc ^= data[i]
+    for (let j = 0; j < 8; j++) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
 
 const debug = createDebugger('@netpeer/swarm/client')
 
@@ -24,7 +37,16 @@ export default class Client {
   messageSize = 262144
   version: string
 
-  #messagesToHandle: { [id: string]: any[] } = {}
+  #messagesToHandle: {
+    [id: string]:
+      | any[]
+      | {
+          chunks: Uint8Array[]
+          receivedBytes: number
+          expectedSize: number
+          expectedCount: number
+        }
+  } = {}
 
   get peerId() {
     return this.#peerId
@@ -342,16 +364,20 @@ export default class Client {
   }
 
   #noticeMessage = (message, id, from, peer) => {
+    const dataOut =
+      message instanceof Uint8Array
+        ? message
+        : new Uint8Array(Object.values(message))
     if (globalThis.pubsub.subscribers[id]) {
       globalThis.pubsub.publish(id, {
-        data: new Uint8Array(Object.values(message)),
+        data: dataOut,
         id,
         from,
         peer
       })
     } else {
       globalThis.pubsub.publish('peer:data', {
-        data: new Uint8Array(Object.values(message)),
+        data: dataOut,
         id,
         from,
         peer
@@ -360,22 +386,138 @@ export default class Client {
   }
 
   #peerData = (peer, data) => {
-    const { id, size, chunk } = JSON.parse(new TextDecoder().decode(data))
-    peer.bw.down += size
-
-    if (size <= MAX_MESSAGE_SIZE) {
-      this.#noticeMessage(chunk, id, peer.peerId, peer)
-    } else {
-      if (!this.#messagesToHandle[id]) this.#messagesToHandle[id] = []
-      this.#messagesToHandle[id] = [
-        ...this.#messagesToHandle[id],
-        ...Object.values(chunk)
-      ]
-
-      if (this.#messagesToHandle[id].length === Number(size)) {
-        this.#noticeMessage(this.#messagesToHandle[id], id, peer.peerId, peer)
-        delete this.#messagesToHandle[id]
+    const tryJson = () => {
+      const parsed = JSON.parse(new TextDecoder().decode(data))
+      const { id, size, chunk, index, count } = parsed
+      const chunkLength = chunk ? Object.values(chunk).length : size
+      return {
+        id,
+        size: Number(size),
+        index: Number(index ?? 0),
+        count: Number(count ?? 1),
+        chunk: new Uint8Array(Object.values(chunk)),
+        flags: 0,
+        crc: 0
       }
+    }
+
+    const decodeBinary = () => {
+      let u8: Uint8Array
+      if (typeof data === 'string') {
+        // should not happen when sending binary, fallback to JSON
+        return tryJson()
+      } else if (data instanceof ArrayBuffer) {
+        u8 = new Uint8Array(data)
+      } else if (ArrayBuffer.isView(data)) {
+        const view = data as ArrayBufferView & {
+          byteOffset?: number
+          byteLength?: number
+        }
+        const byteOffset = (view as any).byteOffset || 0
+        const byteLength = (view as any).byteLength || (data as any).length
+        u8 = new Uint8Array((view as any).buffer, byteOffset, byteLength)
+      } else if (data?.buffer) {
+        u8 = new Uint8Array(data.buffer)
+      } else {
+        // last resort: attempt JSON
+        return tryJson()
+      }
+
+      const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength)
+      let offset = 0
+      const version = dv.getUint8(offset)
+      offset += 1
+      const flags = dv.getUint8(offset)
+      offset += 1
+      const size = dv.getUint32(offset, true)
+      offset += 4
+      const index = dv.getUint32(offset, true)
+      offset += 4
+      const count = dv.getUint32(offset, true)
+      offset += 4
+      const expectedCrc = dv.getUint32(offset, true)
+      offset += 4
+      const idLen = dv.getUint16(offset, true)
+      offset += 2
+      const idBytes = u8.subarray(offset, offset + idLen)
+      offset += idLen
+      const id = new TextDecoder().decode(idBytes)
+      const chunk = u8.subarray(offset)
+
+      return { id, size, index, count, chunk, flags, crc: expectedCrc }
+    }
+
+    const frame = decodeBinary()
+    peer.bw.down += frame.chunk.length
+
+    // Single frame path: if compressed, inflate before publish
+    if (frame.count === 1) {
+      let payload = frame.chunk
+      const compressed = Boolean(frame.flags & (1 << 1))
+      if (compressed) {
+        const actualCrc = crc32(payload)
+        if (actualCrc !== frame.crc) {
+          console.warn(`CRC mismatch: expected ${frame.crc}, got ${actualCrc}`)
+        }
+        try {
+          payload = inflate(payload)
+        } catch (e) {
+          console.warn('inflate failed, passing compressed payload')
+        }
+      }
+      this.#noticeMessage(payload, frame.id, peer.peerId, peer)
+      return
+    }
+
+    // Chunked message handling with indexed reassembly
+    if (
+      !this.#messagesToHandle[frame.id] ||
+      Array.isArray(this.#messagesToHandle[frame.id])
+    ) {
+      this.#messagesToHandle[frame.id] = {
+        chunks: new Array(frame.count),
+        receivedBytes: 0,
+        expectedSize: Number(frame.size),
+        expectedCount: Number(frame.count)
+      }
+    }
+
+    const state = this.#messagesToHandle[frame.id] as {
+      chunks: Uint8Array[]
+      receivedBytes: number
+      expectedSize: number
+      expectedCount: number
+    }
+    // Verify CRC for this chunk
+    const actualCrc = crc32(frame.chunk)
+    if (actualCrc !== frame.crc) {
+      console.warn(
+        `Chunk CRC mismatch for ${frame.id}[${frame.index}]: expected ${frame.crc}, got ${actualCrc}`
+      )
+    }
+    state.chunks[frame.index] = frame.chunk
+    state.receivedBytes += frame.chunk.length
+
+    // If all chunks present and total size matches, reassemble
+    const allPresent = state.chunks.every((c) => c instanceof Uint8Array)
+    if (allPresent && state.receivedBytes === state.expectedSize) {
+      const result = new Uint8Array(state.expectedSize)
+      let offset2 = 0
+      for (const c of state.chunks) {
+        result.set(c, offset2)
+        offset2 += c.length
+      }
+      let payload = result
+      const compressed = Boolean(frame.flags & (1 << 1))
+      if (compressed) {
+        try {
+          payload = inflate(result)
+        } catch (e) {
+          console.warn('inflate failed, passing compressed payload')
+        }
+      }
+      this.#noticeMessage(payload, frame.id, peer.peerId, peer)
+      delete this.#messagesToHandle[frame.id]
     }
   }
 
