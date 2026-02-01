@@ -1,6 +1,19 @@
 import { MAX_MESSAGE_SIZE } from './constants.js'
 import { deflate } from 'pako'
 
+interface NetworkStats {
+  latency: number | null
+  jitter: number | null
+  bytesReceived: number
+  bytesSent: number
+  packetsLost: number
+  fractionLost: number | null
+  inboundBitrate: number | null
+  outboundBitrate: number | null
+  availableOutgoingBitrate: number | null
+  timestamp: number
+}
+
 // Simple CRC32 implementation
 const crc32 = (data: Uint8Array): number => {
   let crc = 0xffffffff
@@ -220,6 +233,72 @@ export default class Peer extends SimplePeer {
       globalThis.pubsub.subscribe(id, onrequest)
       this.send(data, id)
     })
+  }
+
+  /**
+   * Get comprehensive network statistics from WebRTC
+   * @returns NetworkStats object with detailed metrics
+   */
+  async getNetworkStats(): Promise<NetworkStats | null> {
+    try {
+      const pc = (this as any)._pc
+      if (!pc) return null
+
+      const stats = await pc.getStats()
+      const result: NetworkStats = {
+        latency: null,
+        jitter: null,
+        bytesReceived: 0,
+        bytesSent: 0,
+        packetsLost: 0,
+        fractionLost: null,
+        inboundBitrate: null,
+        outboundBitrate: null,
+        availableOutgoingBitrate: null,
+        timestamp: Date.now()
+      }
+
+      let prevBytesReceived = 0
+      let prevBytesSent = 0
+      let prevTimestamp = 0
+
+      stats.forEach((report: any) => {
+        // Latency from candidate pair
+        if (report.type === 'candidate-pair' && report.currentRoundTripTime) {
+          result.latency = Math.round(report.currentRoundTripTime * 1000)
+        }
+
+        // Inbound RTP stats
+        if (report.type === 'inbound-rtp') {
+          result.bytesReceived += report.bytesReceived || 0
+          result.packetsLost += report.packetsLost || 0
+          if (report.jitter) {
+            result.jitter = Math.round(report.jitter * 1000)
+          }
+          if (report.fractionLost) {
+            result.fractionLost = report.fractionLost
+          }
+        }
+
+        // Outbound RTP stats
+        if (report.type === 'outbound-rtp') {
+          result.bytesSent += report.bytesSent || 0
+        }
+
+        // Available bandwidth
+        if (
+          report.type === 'remote-candidate' &&
+          report.availableOutgoingBitrate
+        ) {
+          result.availableOutgoingBitrate = Math.round(
+            report.availableOutgoingBitrate
+          )
+        }
+      })
+      return result
+    } catch (e) {
+      return null
+    }
   }
 
   toJSON() {
