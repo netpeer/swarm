@@ -1,7 +1,7 @@
 import { MAX_MESSAGE_SIZE } from './constants.js'
 import { deflate } from 'pako'
 
-interface NetworkStats {
+export interface NetworkStats {
   latency: number | null
   jitter: number | null
   bytesReceived: number
