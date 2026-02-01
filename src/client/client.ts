@@ -128,6 +128,8 @@ export default class Client {
           url: 'join',
           params: { version: this.version, peerId: this.peerId }
         })
+        globalThis.pubsub.publishVerbose('star:connected', star)
+        debug(`setupStar ${star} succeeded`)
         return this.#stars[star]
       } catch (e) {
         lastErr = e
