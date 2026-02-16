@@ -370,7 +370,7 @@ export default class Client {
       message instanceof Uint8Array
         ? message
         : new Uint8Array(Object.values(message))
-    if (globalThis.pubsub.subscribers[id]) {
+    if (globalThis.pubsub.hasSubscribers(id)) {
       globalThis.pubsub.publish(id, {
         data: dataOut,
         id,
