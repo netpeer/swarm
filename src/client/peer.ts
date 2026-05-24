@@ -131,6 +131,7 @@ export default class Peer extends SimplePeer {
   }
 
   async #chunkit(data: Uint8Array, id: string) {
+    if (!this.connected) return
     this.bw.up = data.length
     // attempt compression; use compressed only if beneficial
     let sendData = data
@@ -183,8 +184,13 @@ export default class Peer extends SimplePeer {
 
     // no needles chunking, keep it simple, if data is smaller then max size just send it
     if (size <= MAX_MESSAGE_SIZE) {
+      if (!this.connected) return
       const flags = (sendData !== data ? 1 : 0) << 1
-      super.send(encodeFrame(id, size, 0, 1, sendData, flags))
+      try {
+        super.send(encodeFrame(id, size, 0, 1, sendData, flags))
+      } catch (e) {
+        return
+      }
       return
     }
 
@@ -227,8 +233,12 @@ export default class Peer extends SimplePeer {
         // eslint-disable-next-line no-await-in-loop
         await sleep(10)
       }
-
-      super.send(encodeFrame(id, size, index, count, chunk, flags))
+      if (!this.connected) return
+      try {
+        super.send(encodeFrame(id, size, index, count, chunk, flags))
+      } catch (e) {
+        return
+      }
       index += 1
     }
   }
@@ -251,6 +261,11 @@ export default class Peer extends SimplePeer {
    */
   request(data: Uint8Array, id = this.#createMessageId()): Promise<Uint8Array> {
     return new Promise((resolve, reject) => {
+      if (!this.connected) {
+        reject(new Error('peer is not connected'))
+        return
+      }
+
       const pubsub = this.#getPubSub()
       if (!pubsub) {
         reject(new Error('globalThis.pubsub is not available'))
@@ -284,6 +299,11 @@ export default class Peer extends SimplePeer {
         finish(() => {
           reject(error instanceof Error ? error : new Error(String(error)))
         })
+        return
+      }
+
+      if (!this.connected) {
+        finish(() => reject(new Error('peer disconnected before request send')))
         return
       }
 
