@@ -1,6 +1,18 @@
 import { MAX_MESSAGE_SIZE } from './constants.js'
 import { deflate } from 'pako'
 
+type PubSubMessage = {
+  data: Uint8Array
+}
+
+type PubSubLike = {
+  subscribe: (topic: string, handler: (message: PubSubMessage) => void) => void
+  unsubscribe: (
+    topic: string,
+    handler: (message: PubSubMessage) => void
+  ) => void
+}
+
 export interface NetworkStats {
   latency: number | null
   jitter: number | null
@@ -98,14 +110,35 @@ export default class Peer extends SimplePeer {
       this.compressionThreshold = compressionThreshold
   }
 
+  #createMessageId(): string {
+    const randomUUID = globalThis.crypto?.randomUUID
+    if (typeof randomUUID === 'function')
+      return randomUUID.call(globalThis.crypto)
+    return `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  }
+
+  #getPubSub(): PubSubLike | null {
+    const pubsubCandidate = (globalThis as { pubsub?: Partial<PubSubLike> })
+      .pubsub
+    if (
+      pubsubCandidate &&
+      typeof pubsubCandidate.subscribe === 'function' &&
+      typeof pubsubCandidate.unsubscribe === 'function'
+    ) {
+      return pubsubCandidate as PubSubLike
+    }
+    return null
+  }
+
   async #chunkit(data: Uint8Array, id: string) {
     this.bw.up = data.length
     // attempt compression; use compressed only if beneficial
     let sendData = data
     try {
       const c = deflate(data)
-      if (c?.length && c.length < data.length * this.compressionThreshold)
+      if (c?.length && c.length < data.length * this.compressionThreshold) {
         sendData = c
+      }
     } catch (e) {
       // ignore
     }
@@ -150,9 +183,7 @@ export default class Peer extends SimplePeer {
 
     // no needles chunking, keep it simple, if data is smaller then max size just send it
     if (size <= MAX_MESSAGE_SIZE) {
-      const flags =
-        ((size > MAX_MESSAGE_SIZE ? 1 : 0) << 0) |
-        ((sendData !== data ? 1 : 0) << 1)
+      const flags = (sendData !== data ? 1 : 0) << 1
       super.send(encodeFrame(id, size, 0, 1, sendData, flags))
       return
     }
@@ -204,34 +235,63 @@ export default class Peer extends SimplePeer {
 
   /**
    * send to peer
-   * @param data ArrayLike
+   * @param data Uint8Array
    * @param id custom id to listen to
    */
-  send(data, id = crypto.randomUUID()) {
+  send(data: Uint8Array, id = this.#createMessageId()) {
     // send chuncks till ndata support for SCTP is added
     // wraps data
-    this.#chunkit(data, id)
+    void this.#chunkit(data, id).catch(() => {})
   }
 
   /**
    * send to peer & wait for response
-   * @param data ArrayLike
+   * @param data Uint8Array
    * @param id custom id to listen to
    */
-  request(data, id = crypto.randomUUID()) {
+  request(data: Uint8Array, id = this.#createMessageId()): Promise<Uint8Array> {
     return new Promise((resolve, reject) => {
-      let timeout: ReturnType<typeof setTimeout>
-      const onrequest = ({ data }) => {
-        clearTimeout(timeout)
-        resolve(data)
-        globalThis.pubsub.unsubscribe(id, onrequest)
+      const pubsub = this.#getPubSub()
+      if (!pubsub) {
+        reject(new Error('globalThis.pubsub is not available'))
+        return
       }
+
+      let timeout: ReturnType<typeof setTimeout>
+      let settled = false
+
+      const finish = (fn: () => void) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        try {
+          pubsub.unsubscribe(id, onrequest)
+        } catch (e) {}
+        fn()
+      }
+
+      const onrequest = ({ data }: PubSubMessage) => {
+        finish(() => resolve(data))
+      }
+
       timeout = setTimeout(() => {
-        globalThis.pubsub.unsubscribe(id, onrequest)
-        reject(`request for ${id} timed out`)
+        finish(() => reject(new Error(`request for ${id} timed out`)))
       }, 30_000)
-      globalThis.pubsub.subscribe(id, onrequest)
-      this.send(data, id)
+
+      try {
+        pubsub.subscribe(id, onrequest)
+      } catch (error) {
+        finish(() => {
+          reject(error instanceof Error ? error : new Error(String(error)))
+        })
+        return
+      }
+
+      void this.#chunkit(data, id).catch((error) => {
+        finish(() => {
+          reject(error instanceof Error ? error : new Error(String(error)))
+        })
+      })
     })
   }
 
