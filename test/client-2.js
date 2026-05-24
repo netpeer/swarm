@@ -9,7 +9,7 @@ const client = new Client({
 const message = new Uint8Array(64 * 1024)
 pubsub.subscribe('hello', (data) => {
   const peer = client.getPeer('peer-1')
-  peer.send('hi', 'hello')
+  peer.send(new TextEncoder().encode('hi'), 'hello')
 })
 
 pubsub.subscribe('peer:data', (data) => {
