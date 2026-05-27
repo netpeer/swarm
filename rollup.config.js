@@ -1,10 +1,7 @@
-import modify from 'rollup-plugin-modify'
 import typescript from '@rollup/plugin-typescript'
 import json from '@rollup/plugin-json'
 import rimraf from 'rimraf'
 import nodeResolve from '@rollup/plugin-node-resolve'
-import commonjs from '@rollup/plugin-commonjs'
-import { readFile } from 'fs/promises'
 
 try {
   rimraf.sync('./exports/*.js')
@@ -28,7 +25,6 @@ export default [
     external: [
       'socket-request-server',
       'socket-request-client',
-      'simple-peer',
       '@koush/wrtc',
       '@vandeurenglenn/debug',
       'websocket'
@@ -44,7 +40,7 @@ export default [
         format: 'es'
       }
     ],
-    external: ['simple-peer', '@koush/wrtc', 'websocket'],
+    external: ['@koush/wrtc', 'websocket'],
     plugins: [
       typescript({
         compilerOptions: {
@@ -55,11 +51,6 @@ export default [
       json(),
       nodeResolve({
         mainFields: ['module']
-      }),
-      modify({
-        "const SimplePeer = (await import('simple-peer')).default;": (
-          await readFile('./node_modules/simple-peer/simplepeer.min.js')
-        ).toString()
       })
     ]
   }
