@@ -1130,12 +1130,17 @@ export default class Client {
   }
 
   #peerClose = (peer: PeerConnectionLike) => {
+    // A failed transport can finish closing after fallback has already placed a
+    // replacement in the connection map. Never let that stale close delete or
+    // advance the replacement's active attempt.
+    if (this.#connections[peer.peerId] !== peer) {
+      debug(`ignored stale close for ${peer.peerId}`)
+      return
+    }
+
     const wasConnected = peer.connected
     this.#peerTransportKinds.delete(peer.peerId)
-    if (this.#connections[peer.peerId]) {
-      peer.destroy()
-      delete this.#connections[peer.peerId]
-    }
+    delete this.#connections[peer.peerId]
 
     if (!wasConnected && this.#peerTransportAttempts.has(peer.peerId)) {
       this.#advanceTransportAttempt(peer.peerId)
