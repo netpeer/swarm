@@ -1038,15 +1038,15 @@ export default class Client {
   }
 
   #peerJoined = async ({ peerId, version, transport }, star) => {
-    // check if peer rejoined before the previous connection closed
-    if (this.#connections[peerId]) {
-      this.#connections[peerId].destroy()
-      delete this.#connections[peerId]
-    }
-
     if (this.peerId === peerId) return
 
-    this.#startPeerTransportAttempt(peerId, star, version, true, transport)
+    // Stars can announce the same peer more than once while its transport is
+    // still negotiating. Keep that connection/attempt alive; destroying it
+    // here makes simultaneous joins continually reset each other.
+    // Both sides receive the discovery event. Elect exactly one offerer so
+    // simultaneous joins do not create competing channels/SDP negotiations.
+    const initiator = String(this.peerId) < String(peerId)
+    this.#startPeerTransportAttempt(peerId, star, version, initiator, transport)
 
     debug(`peer ${peerId} joined`)
   }

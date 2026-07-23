@@ -109,6 +109,23 @@ export default class Server {
             : 'webtransport',
       kinds: peerKinds
     }
+    // A broadcast tells existing peers about the newcomer, but the newcomer
+    // also needs the peers that joined before it. Without this snapshot a
+    // four-node star produces a one-way 3/2/1/0 discovery graph.
+    for (const [existingPeerId, existingPeer] of this.peers) {
+      connection.send(
+        JSON.stringify({
+          url: 'peer:joined',
+          status: 200,
+          value: {
+            peerId: existingPeerId,
+            version: existingPeer.version,
+            transport: existingPeer.transport
+          }
+        })
+      )
+    }
+
     this.peers.set(peerId, {
       connection,
       version,
