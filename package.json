@@ -50,7 +50,8 @@
     "@rollup/plugin-typescript": "^12.3.0",
     "@types/pako": "^2.0.4",
     "rollup": "^4.60.4",
-    "tslib": "^2.8.1"
+    "tslib": "^2.8.1",
+    "typescript": "^6.0.2"
   },
   "dependencies": {
     "@koush/wrtc": "^0.5.3",
