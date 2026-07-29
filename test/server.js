@@ -3,7 +3,7 @@ import Server from './../exports/server.js'
 const port = Number(process.env.SWARM_TEST_PORT || 44444)
 const mode = process.env.SWARM_TEST_SERVER_MODE || ''
 
-const swarmServer = new Server({ version: 1, port })
+const swarmServer = new Server(port, 'peach')
 
 const waitForPeers = async (server, peerIds, timeoutMs = 10_000) => {
   const start = Date.now()
