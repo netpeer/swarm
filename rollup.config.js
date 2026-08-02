@@ -22,15 +22,15 @@ export default [
         format: 'es'
       }
     ],
+    plugins: [typescript()],
     external: [
       'socket-request-server',
       'socket-request-client',
       '@koush/wrtc',
       '@vandeurenglenn/debug',
+      'pako',
       'websocket'
-    ],
-    plugins: [typescript()],
-    external: ['websocket']
+    ]
   },
   {
     input: ['src/client/client.ts'],
