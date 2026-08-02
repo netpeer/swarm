@@ -7,6 +7,7 @@ import { MAX_MESSAGE_SIZE, defaultOptions } from './constants.js'
 import { Options } from '../types.js'
 import { createDebugger } from '@vandeurenglenn/debug'
 import { inflate } from 'pako'
+import { normalizePeerAnnouncement } from './peer-announcement.js'
 
 // Simple CRC32 implementation
 const crc32 = (data: Uint8Array): number => {
@@ -1037,7 +1038,16 @@ export default class Client {
     return peer
   }
 
-  #peerJoined = async ({ peerId, version, transport }, star) => {
+  #peerJoined = async (announcement, star) => {
+    const normalized = normalizePeerAnnouncement(announcement)
+    if (!normalized) {
+      debug('ignored malformed peer announcement')
+      return
+    }
+    const { peerId, transport } = normalized
+    // Legacy stars announce only the peer id. This value is used for transport
+    // negotiation; applications still perform their own version handshake.
+    const version = normalized.version ?? this.version
     if (this.peerId === peerId) return
 
     // Stars can announce the same peer more than once while its transport is
