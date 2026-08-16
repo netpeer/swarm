@@ -29,7 +29,7 @@ type WrtcImplementation = {
   RTCIceCandidate: new (...args: unknown[]) => unknown
 }
 
-type WrtcBackendName = 'koush'
+type WrtcBackendName = 'vandeurenglenn' | 'koush'
 
 const isWrtcImplementation = (
   candidate: unknown
@@ -138,6 +138,7 @@ export default class Client {
   #connectEvent = 'peer:connected'
   #supportedTransports: Set<ClientTransportKind> = new Set(['webrtc'])
   #preferredTransportKind: ClientTransportKind = 'webrtc'
+  #wrtcBackend: WrtcBackendName = 'vandeurenglenn'
   #fallbackTransportOrder: ConnectionTransportKind[] = []
   #enableCircuitFallback = true
   #transportConnectTimeoutMs = 10_000
@@ -225,6 +226,14 @@ export default class Client {
         : 'webtransport'
 
     this.#webTransportUrlTemplate = options.transport?.webtransport?.urlTemplate
+    const wrtcBackend =
+      options.transport?.webrtc?.backend ||
+      globalThis.process?.env?.NETPEER_SWARM_WRTC_BACKEND ||
+      'vandeurenglenn'
+    if (wrtcBackend !== 'vandeurenglenn' && wrtcBackend !== 'koush') {
+      throw new Error(`Unsupported WebRTC backend: ${wrtcBackend}`)
+    }
+    this.#wrtcBackend = wrtcBackend
     this.#enableCircuitFallback = options.transport?.fallback?.enabled ?? true
     if (
       typeof options.transport?.fallback?.connectTimeoutMs === 'number' &&
@@ -327,6 +336,7 @@ export default class Client {
 
   async _init() {
     if (
+      this.#supportedTransports.has('webrtc') &&
       !globalThis.RTCPeerConnection &&
       !(globalThis as { wrtc?: unknown }).wrtc
     ) {
@@ -369,14 +379,32 @@ export default class Client {
   }
 
   async #loadNodeWebrtcImplementation(): Promise<WrtcLoadResult> {
-    const koushWrtcModule = await import('@koush/wrtc')
-    const koushWrtc = koushWrtcModule.default
-    if (!isWrtcImplementation(koushWrtc)) {
-      throw new Error('@koush/wrtc does not match required wrtc contract')
+    let wrtcModule: unknown
+    if (this.#wrtcBackend === 'koush') {
+      try {
+        wrtcModule = await import('@koush/wrtc')
+      } catch (error) {
+        throw new Error(
+          'The koush WebRTC backend is opt-in; install @koush/wrtc to use it',
+          { cause: error }
+        )
+      }
+    } else {
+      wrtcModule = await import('@vandeurenglenn/wrtc')
     }
 
-    debug('using @koush/wrtc as wrtc implementation')
-    return { backend: 'koush', implementation: koushWrtc }
+    const moduleCandidate = wrtcModule as { default?: unknown }
+    const implementation = isWrtcImplementation(moduleCandidate.default)
+      ? moduleCandidate.default
+      : wrtcModule
+    if (!isWrtcImplementation(implementation)) {
+      const packageName =
+        this.#wrtcBackend === 'koush' ? '@koush/wrtc' : '@vandeurenglenn/wrtc'
+      throw new Error(`${packageName} does not match required wrtc contract`)
+    }
+
+    debug(`using ${this.#wrtcBackend} as wrtc implementation`)
+    return { backend: this.#wrtcBackend, implementation }
   }
 
   setupStarListeners(starConnection, starId) {
