@@ -27,6 +27,7 @@ export default [
       'socket-request-server',
       'socket-request-client',
       '@koush/wrtc',
+      '@vandeurenglenn/wrtc',
       '@vandeurenglenn/debug',
       'pako',
       'websocket'
@@ -40,7 +41,7 @@ export default [
         format: 'es'
       }
     ],
-    external: ['@koush/wrtc', 'websocket'],
+    external: ['@koush/wrtc', '@vandeurenglenn/wrtc', 'websocket'],
     plugins: [
       typescript({
         compilerOptions: {
