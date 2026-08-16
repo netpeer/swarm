@@ -399,9 +399,7 @@ export default class Client {
       : wrtcModule
     if (!isWrtcImplementation(implementation)) {
       const packageName =
-        this.#wrtcBackend === 'koush'
-          ? '@koush/wrtc'
-          : '@vandeurenglenn/wrtc'
+        this.#wrtcBackend === 'koush' ? '@koush/wrtc' : '@vandeurenglenn/wrtc'
       throw new Error(`${packageName} does not match required wrtc contract`)
     }
 
