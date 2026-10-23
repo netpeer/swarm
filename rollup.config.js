@@ -1,18 +1,16 @@
 import typescript from '@rollup/plugin-typescript'
 import json from '@rollup/plugin-json'
-import rimraf from 'rimraf'
 import nodeResolve from '@rollup/plugin-node-resolve'
-
-try {
-  rimraf.sync('./exports/*.js')
-} catch (e) {
-  console.log('nothing to clean')
-}
 
 export default [
   {
     input: [
       'src/server/server.ts',
+      'src/server/webtransport-relay.js',
+      'src/server/relay-tickets.js',
+      'src/transport-frames.js',
+      'src/client/circuit-peer.ts',
+      'src/client/webtransport-peer.ts',
       'src/client/client.ts',
       'src/client/peer.ts'
     ],
@@ -28,9 +26,12 @@ export default [
       'socket-request-client',
       '@koush/wrtc',
       '@vandeurenglenn/wrtc',
+      '@fails-components/webtransport',
       '@vandeurenglenn/debug',
       'pako',
-      'websocket'
+      'websocket',
+      'node:crypto',
+      'node:http'
     ]
   },
   {
@@ -41,7 +42,7 @@ export default [
         format: 'es'
       }
     ],
-    external: ['@koush/wrtc', '@vandeurenglenn/wrtc', 'websocket'],
+    external: ['@koush/wrtc', '@vandeurenglenn/wrtc', '@fails-components/webtransport', 'websocket'],
     plugins: [
       typescript({
         compilerOptions: {

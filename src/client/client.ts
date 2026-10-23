@@ -54,7 +54,7 @@ type ConnectionTransportKind = ClientTransportKind | 'circuit'
 type PeerTransportAttempt = {
   order: ConnectionTransportKind[]
   index: number
-  star: string
+  star: any
   version: string
   initiator: boolean
   timeout?: ReturnType<typeof setTimeout>
@@ -147,6 +147,8 @@ export default class Client {
   #fallbackCircuitMethod = 'swarm:fallback:send'
   #testHooks?: ClientTestHooks
   #webTransportUrlTemplate?: string
+  #discoverWebTransport = true
+  #relayUrls = new WeakMap<object, string>()
   #circuitHandlers: Map<string, CircuitHandler> = new Map()
   #pendingCircuitRequests: Map<
     string,
@@ -154,6 +156,8 @@ export default class Client {
       resolve: (value: unknown) => void
       reject: (error: Error) => void
       timeout: ReturnType<typeof setTimeout>
+      peerId: string
+      starConnection: SocketRequestClient['clientConnection']
     }
   > = new Map()
   #circuitRequestTimeoutMs = 30_000
@@ -208,7 +212,9 @@ export default class Client {
       ? options.transport.kinds
       : options.transport?.kind
         ? [options.transport.kind]
-        : (['webrtc', 'webtransport'] as ClientTransportKind[])
+        : (options.transport?.webtransport?.urlTemplate
+            ? ['webrtc', 'webtransport']
+            : ['webrtc']) as ClientTransportKind[]
 
     this.#supportedTransports = new Set(
       this.#normalizeTransportKinds(configuredKinds)
@@ -226,6 +232,11 @@ export default class Client {
         : 'webtransport'
 
     this.#webTransportUrlTemplate = options.transport?.webtransport?.urlTemplate
+    this.#discoverWebTransport = !options.transport?.kind && !options.transport?.kinds ||
+      !!options.transport?.kinds?.includes('webtransport') || options.transport?.kind === 'webtransport'
+    if (this.#discoverWebTransport && (typeof (globalThis as any).WebTransport === 'function' || (globalThis as any).process?.versions?.node)) {
+      this.#supportedTransports.add('webtransport')
+    }
     const wrtcBackend =
       options.transport?.webrtc?.backend ||
       globalThis.process?.env?.NETPEER_SWARM_WRTC_BACKEND ||
@@ -251,6 +262,9 @@ export default class Client {
     this.#circuitHandlers.set(this.#fallbackCircuitMethod, (payload, context) =>
       this.#handleFallbackCircuitPayload(payload, context)
     )
+    this.#circuitHandlers.set('swarm:fallback:hello', () => ({
+      peerId: this.peerId, version: this.version, encoding: 'peer-core/1'
+    }))
 
     if (!this.#testHooks?.skipInit) {
       this._init()
@@ -419,6 +433,22 @@ export default class Client {
     const onServerData = (message) => {
       globalThis.pubsub.publish('server:data', message)
     }
+    const onRelayReady = (message: { protocol?: unknown; url?: unknown } | null | undefined) => {
+      if (!this.#discoverWebTransport || message?.protocol !== 'swarm-relay/1' || typeof message.url !== 'string') return
+      let url: URL
+      try { url = new URL(message.url) } catch { return }
+      if (url.protocol !== 'https:' || url.username || url.password || url.hash) return
+      if (this.#relayUrls.get(starConnection) === url.href) return
+      this.#relayUrls.set(starConnection, url.href)
+      this.#supportedTransports.add('webtransport')
+      // Update capabilities on this same authenticated star connection. The
+      // server sends relay metadata before its peer snapshot, so fallback can
+      // resolve a real endpoint without users configuring transport URLs.
+      starConnection.send({ url: 'join', params: {
+        version: this.version, peerId: this.peerId,
+        transport: { kind: this.#preferredTransportKind, kinds: [...this.#supportedTransports] }
+      } })
+    }
 
     starConnection.pubsub.subscribe('peer:joined', onPeerJoined)
     starConnection.pubsub.subscribe('peer:left', onPeerLeft)
@@ -427,6 +457,7 @@ export default class Client {
     starConnection.pubsub.subscribe('signal', onSignal)
     starConnection.pubsub.subscribe('circuit', onCircuit)
     starConnection.pubsub.subscribe('server:data', onServerData)
+    starConnection.pubsub.subscribe('relay:ready', onRelayReady)
 
     this.#starListeners[starId] = [
       { topic: 'peer:joined', handler: onPeerJoined },
@@ -435,7 +466,8 @@ export default class Client {
       { topic: 'star:left', handler: onStarLeft },
       { topic: 'signal', handler: onSignal },
       { topic: 'circuit', handler: onCircuit },
-      { topic: 'server:data', handler: onServerData }
+      { topic: 'server:data', handler: onServerData },
+      { topic: 'relay:ready', handler: onRelayReady }
     ]
   }
 
@@ -687,12 +719,12 @@ export default class Client {
         attempt.initiator
       )
     } else if (transportKind === 'webtransport') {
-      const url = this.#resolveWebTransportUrl(peerId)
+      const url = this.#resolveWebTransportUrl(peerId, attempt.star)
       if (!url) {
         this.#advanceTransportAttempt(peerId)
         return
       }
-      peer = this.#createWebTransportConnection(peerId, url, attempt.version)
+      peer = this.#createWebTransportConnection(peerId, url, attempt.version, attempt.star)
     } else {
       peer = this.#createCircuitConnection(peerId, attempt.version)
     }
@@ -747,7 +779,24 @@ export default class Client {
     if (!peer) {
       peer = this.#createCircuitConnection(context.from, this.version)
     }
-    this.#noticeMessage(decoded.data, decoded.id, context.from, peer)
+    if (!peer) throw new Error('circuit peer unavailable')
+    if (!peer.connected) {
+      const waitingPeer = peer
+      await new Promise<void>((resolve, reject) => {
+        const finish = (error?: Error) => {
+          clearTimeout(timer)
+          waitingPeer.off('connect', onConnect)
+          waitingPeer.off('close', onClose)
+          error ? reject(error) : resolve()
+        }
+        const onConnect = () => finish()
+        const onClose = () => finish(new Error('circuit peer closed during handshake'))
+        const timer = setTimeout(() => finish(new Error('circuit handshake timed out')), this.#transportConnectTimeoutMs)
+        waitingPeer.on('connect', onConnect)
+        waitingPeer.on('close', onClose)
+      })
+    }
+    this.#peerData(peer, decoded.data)
     return { ok: true }
   }
 
@@ -828,16 +877,20 @@ export default class Client {
         reject(new Error(`circuit request for ${id} timed out`))
       }, timeoutMs)
 
-      this.#pendingCircuitRequests.set(id, { resolve, reject, timeout })
+      this.#pendingCircuitRequests.set(id, { resolve, reject, timeout, peerId, starConnection })
 
-      this.#sendCircuit(starConnection, {
+      try { this.#sendCircuit(starConnection, {
         to: peerId,
         from: this.peerId,
         id,
         phase: 'request',
         method,
         data: this.#encodeCircuitData(data)
-      })
+      }) } catch (error) {
+        clearTimeout(timeout)
+        this.#pendingCircuitRequests.delete(id)
+        reject(error)
+      }
     })
   }
 
@@ -850,6 +903,8 @@ export default class Client {
     if (phase === 'response') {
       const pending = this.#pendingCircuitRequests.get(id)
       if (!pending) return
+      if (pending.starConnection !== starConnection) return
+      if (from !== pending.peerId && !(from === 'server' && error)) return
       clearTimeout(pending.timeout)
       this.#pendingCircuitRequests.delete(id)
 
@@ -935,12 +990,9 @@ export default class Client {
     this.#createWebTransportConnection(peerId, url, this.version)
   }
 
-  #resolveWebTransportUrl(peerId: string): string | null {
-    const urlTemplate = this.#webTransportUrlTemplate
+  #resolveWebTransportUrl(peerId: string, starConnection?: object): string | null {
+    const urlTemplate = this.#webTransportUrlTemplate || (starConnection && this.#relayUrls.get(starConnection))
     if (!urlTemplate) {
-      console.warn(
-        'WebTransport requires transport.webtransport.urlTemplate in client options'
-      )
       return null
     }
     return urlTemplate
@@ -948,7 +1000,7 @@ export default class Client {
       .replace('{selfId}', encodeURIComponent(this.peerId))
   }
 
-  #createWebTransportConnection(peerId: string, url: string, version: string) {
+  #createWebTransportConnection(peerId: string, url: string, version: string, starConnection?: SocketRequestClient['clientConnection']) {
     if (this.#connections[peerId]) {
       debug(`peer ${peerId} already connected`)
       return null
@@ -975,7 +1027,22 @@ export default class Client {
       from: this.peerId,
       to: peerId,
       version,
-      url
+      url,
+      getTicket: async () => {
+        const star = starConnection || this.#pickStarConnection()
+        if (!star) throw new Error('no connected star available for WebTransport ticket')
+        let timer: ReturnType<typeof setTimeout>
+        try {
+          const response = await Promise.race([
+            star.request({ url: 'webtransport-ticket', params: { from: this.peerId, to: peerId } }),
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(() => reject(new Error('WebTransport ticket request timed out')), this.#transportConnectTimeoutMs)
+            })
+          ]) as { ticket?: string }
+          if (typeof response?.ticket !== 'string') throw new Error('star did not authorize WebTransport relay')
+          return response.ticket
+        } finally { clearTimeout(timer!) }
+      }
     })
 
     peer.on('connect', () => this.#peerConnect(peer))
@@ -1014,6 +1081,14 @@ export default class Client {
       from: this.peerId,
       to: peerId,
       version,
+      handshake: async () => {
+        const response = await this.circuitRequest(
+          peerId, 'swarm:fallback:hello', undefined, this.#transportConnectTimeoutMs
+        ) as { peerId?: string; version?: string; encoding?: string }
+        if (response?.peerId !== peerId || String(response?.version) !== String(version) || response.encoding !== 'peer-core/1') {
+          throw new Error('invalid circuit handshake response')
+        }
+      },
       sendViaCircuit: (payload) =>
         this.circuitRequest(peerId, this.#fallbackCircuitMethod, payload)
     })
@@ -1384,6 +1459,11 @@ export default class Client {
   }
 
   async close() {
+    for (const pending of this.#pendingCircuitRequests.values()) {
+      clearTimeout(pending.timeout)
+      pending.reject(new Error('client closed'))
+    }
+    this.#pendingCircuitRequests.clear()
     for (const peerId of this.#peerTransportAttempts.keys()) {
       this.#clearTransportAttempt(peerId)
     }

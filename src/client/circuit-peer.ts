@@ -1,3 +1,4 @@
+import { PeerCore } from './peer-core.js'
 type PeerEvent = 'signal' | 'connect' | 'close' | 'data' | 'error'
 
 type PubSubLike = {
@@ -28,6 +29,7 @@ export default class CircuitPeer {
   #destroyed = false
   #connected = false
   #sendViaCircuit: (payload: { id: string; data: number[] }) => Promise<unknown>
+  #core: PeerCore
 
   initiator = true
   peerId: string
@@ -43,6 +45,7 @@ export default class CircuitPeer {
     from: string
     to: string
     version: string | number
+    handshake: () => Promise<void>
     sendViaCircuit: (payload: {
       id: string
       data: number[]
@@ -52,12 +55,37 @@ export default class CircuitPeer {
     this.channelName = `circuit:${options.from}:${options.to}`
     this.version = String(options.version)
     this.#sendViaCircuit = options.sendViaCircuit
+    this.#core = new PeerCore({
+      kind: 'circuit',
+      isConnected: () => this.connected,
+      sendRaw: data => {
+        void this.#sendViaCircuit({ id: this.#createMessageId(), data: Array.from(data) }).catch(error => {
+          if (this.#destroyed) return
+          this.#emit('error', error)
+          this.destroy()
+        })
+      }
+    }, {
+      // JSON byte arrays expand up to four characters per byte. Keep the whole
+      // WebSocket frame below its default 64 KiB limit, including wrapper/ID.
+      maxMessageSize: 14_000,
+      compressionThreshold: 0.98,
+      getPubSub,
+      onPayloadSend: bytes => { this.bw.up += bytes }
+    })
 
-    setTimeout(() => {
-      if (this.#destroyed) return
-      this.#connected = true
-      this.#emit('connect')
-    }, 0)
+    queueMicrotask(async () => {
+      try {
+        await options.handshake()
+        if (this.#destroyed) return
+        this.#connected = true
+        this.#emit('connect')
+      } catch (error) {
+        if (this.#destroyed) return
+        this.#emit('error', error)
+        this.destroy()
+      }
+    })
   }
 
   #createMessageId(): string {
@@ -91,51 +119,23 @@ export default class CircuitPeer {
   }
 
   send(data: Uint8Array, id = this.#createMessageId()) {
+    if (new TextEncoder().encode(id).length > 1024) {
+      this.#emit('error', new Error('circuit message id exceeds 1024 bytes'))
+      return
+    }
     if (this.#destroyed) {
       this.#emit('error', new Error('circuit peer is destroyed'))
       return
     }
 
-    this.bw.up += data.length
-    void this.#sendViaCircuit({ id, data: Array.from(data) }).catch((error) => {
-      this.#emit(
-        'error',
-        error instanceof Error ? error : new Error(String(error))
-      )
-    })
+    this.#core.send(data, id)
   }
 
   request(data: Uint8Array, id = this.#createMessageId()): Promise<Uint8Array> {
-    const pubsub = getPubSub()
-    if (!pubsub) {
-      return Promise.reject(new Error('globalThis.pubsub is not available'))
+    if (new TextEncoder().encode(id).length > 1024) {
+      return Promise.reject(new Error('circuit message id exceeds 1024 bytes'))
     }
-
-    return new Promise((resolve, reject) => {
-      let timeout: ReturnType<typeof setTimeout>
-      let settled = false
-
-      const finish = (fn: () => void) => {
-        if (settled) return
-        settled = true
-        clearTimeout(timeout)
-        try {
-          pubsub.unsubscribe(id, onResponse)
-        } catch (e) {}
-        fn()
-      }
-
-      const onResponse = ({ data: response }: { data: Uint8Array }) => {
-        finish(() => resolve(response))
-      }
-
-      timeout = setTimeout(() => {
-        finish(() => reject(new Error(`request for ${id} timed out`)))
-      }, 30_000)
-
-      pubsub.subscribe(id, onResponse)
-      this.send(data, id)
-    })
+    return this.#core.request(data, id)
   }
 
   async getNetworkStats(): Promise<null> {

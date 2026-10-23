@@ -101,6 +101,9 @@ const main = async () => {
   const integrationOnly = process.argv.includes('--integration-only')
   if (!integrationOnly) {
     await runCommand('build', 'npm', ['run', 'build'])
+    await runCommand('transport', process.execPath, ['--test', './test/transport.test.js'])
+    await runCommand('relay-config', process.execPath, ['--test', './test/relay-config.test.js'])
+    await runCommand('authorization', process.execPath, ['./test/relay-authorization.js'], { timeout: 10_000 })
     await runCommand('unit-latency', process.execPath, [
       './test/unit-latency.js'
     ])
@@ -109,6 +112,14 @@ const main = async () => {
     ])
   }
   await runIntegration({ SWARM_TEST_MODE: 'peer' })
+  // No direct overlap: this must complete the real circuit hello before the
+  // peer-connected event, then deliver the 64 KiB request and response.
+  await runIntegration({
+    SWARM_TEST_MODE: 'peer',
+    SWARM_TEST_RANDOM_PAYLOAD: '1',
+    SWARM_TEST_TRANSPORT_KINDS: 'webrtc',
+    SWARM_TEST_TRANSPORT_KINDS_PEER2: 'webtransport'
+  })
   await runIntegration({
     SWARM_TEST_MODE: 'circuit',
     SWARM_TEST_TRANSPORT_KINDS: 'webrtc',

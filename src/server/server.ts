@@ -1,5 +1,7 @@
 import server from 'socket-request-server'
 import { createDebugger } from '@vandeurenglenn/debug'
+import { RelayTickets } from './relay-tickets.js'
+import { createServer } from 'node:http'
 const debug = createDebugger('@netpeer/swarm/server')
 
 type PeerTransportKind = 'webrtc' | 'webtransport'
@@ -26,6 +28,8 @@ type CircuitPayload = {
 }
 
 type PendingServerCircuitRequest = {
+  peerId: string
+  connection: WebSocket
   resolve: (value: unknown) => void
   reject: (error: Error) => void
   timeout: ReturnType<typeof setTimeout>
@@ -35,15 +39,55 @@ export default class Server {
   peers: Map<string, PeerRecord> = new Map()
   #pendingServerCircuitRequests: Map<string, PendingServerCircuitRequest> =
     new Map()
+  #relayUrl?: string
+  #httpServer = createServer()
+  #socketServer: ReturnType<typeof server>
+  #closing = false
+  ready: Promise<void>
 
-  constructor(port = 44444, networkVersion = 'peach') {
-    server(
-      { port, protocol: networkVersion },
+  address() { return this.#httpServer.address() }
+
+  async close() {
+    if (this.#closing) return
+    this.#closing = true
+    for (const pending of this.#pendingServerCircuitRequests.values()) {
+      clearTimeout(pending.timeout)
+      pending.reject(new Error('star stopped'))
+    }
+    this.#pendingServerCircuitRequests.clear()
+    try {
+      const socketServer = await this.#socketServer
+      socketServer.close()
+    } finally {
+      if (this.#httpServer.listening) await new Promise<void>(resolve => this.#httpServer.close(() => resolve()))
+    }
+  }
+
+  constructor(port = 44444, networkVersion = 'peach', options: { relaySecret?: string; relayUrl?: string } = {}) {
+    const tickets = options.relaySecret ? new RelayTickets(options.relaySecret) : null
+    if (options.relayUrl) {
+      const url = new URL(options.relayUrl)
+      if (!tickets || url.protocol !== 'https:' || url.username || url.password || url.hash) throw new Error('invalid WebTransport relay URL')
+      this.#relayUrl = url.href
+    }
+    this.#socketServer = server(
+      { httpServer: this.#httpServer, port, protocol: networkVersion },
       {
         join: this.#join,
         leave: this.#leave,
         signal: this.#signal,
         circuit: this.#circuit,
+        'webtransport-ticket': ({ from, to }: { from: string; to: string }, response: { connection: WebSocket; send: (value: unknown) => void }) => {
+          const sender = this.peers.get(from)
+          const target = this.peers.get(to)
+          if (!tickets || !sender || sender.connection !== response.connection || !target ||
+              from === to || sender.version !== target.version ||
+              !sender.transport.kinds.includes('webtransport') || !target.transport.kinds.includes('webtransport')) {
+            response.send({ error: 'relay unavailable or peer not authorized' })
+            return
+          }
+          response.send({ ticket: tickets.issue(from, to, networkVersion, String(sender.version)) })
+        },
         peers: ({ connection }) =>
           connection.send(
             JSON.stringify({
@@ -70,6 +114,16 @@ export default class Server {
         // }
       }
     )
+    this.ready = Promise.all([
+      this.#socketServer,
+      new Promise<void>((resolve, reject) => {
+        this.#httpServer.once('error', reject)
+        this.#httpServer.listen(port, () => {
+          console.log(`listening on ${(this.#httpServer.address() as any).port}`)
+          resolve()
+        })
+      })
+    ]).then(() => {})
   }
 
   #join = (
@@ -84,6 +138,14 @@ export default class Server {
     },
     { connection }: { connection: WebSocket }
   ) => {
+    if (typeof peerId !== 'string' || !peerId.length || peerId === 'server') return
+    const previous = this.peers.get(peerId)
+    if (previous && previous.connection !== connection) return
+    if (!previous) (connection as any).on('close', () => {
+      if (this.peers.get(peerId)?.connection !== connection) return
+      this.peers.delete(peerId)
+      this.#broadcast('peer:left', peerId)
+    })
     const advertisedKinds = Array.isArray(transport?.kinds)
       ? [
           ...new Set(
@@ -94,7 +156,7 @@ export default class Server {
         ]
       : []
 
-    const peerKinds = advertisedKinds.length
+    const peerKinds: PeerTransportKind[] = advertisedKinds.length
       ? advertisedKinds
       : transport?.kind === 'webtransport'
         ? ['webtransport']
@@ -109,6 +171,11 @@ export default class Server {
             : 'webtransport',
       kinds: peerKinds
     }
+    if (this.#relayUrl) connection.send(JSON.stringify({
+      url: 'relay:ready', status: 200,
+      value: { protocol: 'swarm-relay/1', url: this.#relayUrl }
+    }))
+    if (previous && JSON.stringify(previous.transport) === JSON.stringify(peerTransport)) return
     // A broadcast tells existing peers about the newcomer, but the newcomer
     // also needs the peers that joined before it. Without this snapshot a
     // four-node star produces a one-way 3/2/1/0 discovery graph.
@@ -141,9 +208,10 @@ export default class Server {
     )
   }
 
-  #leave = (peerId: string) => {
+  #leave = (peerId: string, { connection }: { connection: WebSocket }) => {
     // 1000 means normal close
     const peer = this.peers.get(peerId)
+    if (peer?.connection !== connection) return
     if (!peer) {
       console.warn(`No connection found for peer ${peerId}`)
       return
@@ -197,9 +265,13 @@ export default class Server {
       return
     }
 
+    const fromPeer = this.peers.get(from)
+    if (!fromPeer || fromPeer.connection !== connection) return
+
     if (to === 'server' && phase === 'response') {
       const pending = this.#pendingServerCircuitRequests.get(id)
       if (!pending) return
+      if (pending.peerId !== from || pending.connection !== connection) return
       clearTimeout(pending.timeout)
       this.#pendingServerCircuitRequests.delete(id)
       if (error) {
@@ -208,17 +280,6 @@ export default class Server {
         pending.resolve(data)
       }
       return
-    }
-
-    const fromPeer = this.peers.get(from)
-    if (!fromPeer) {
-      console.warn(`Circuit sender not found for peer ${from}`)
-      return
-    }
-    if (fromPeer.connection !== connection) {
-      debug(
-        `Circuit sender connection differs for ${from}; forwarding based on peerId`
-      )
     }
 
     const toPeer = this.peers.get(to)
@@ -301,7 +362,7 @@ export default class Server {
         reject(new Error(`server circuit request for ${id} timed out`))
       }, timeoutMs)
 
-      this.#pendingServerCircuitRequests.set(id, { resolve, reject, timeout })
+      this.#pendingServerCircuitRequests.set(id, { resolve, reject, timeout, peerId, connection: peer.connection })
 
       peer.connection.send(
         JSON.stringify({
@@ -321,6 +382,7 @@ export default class Server {
   }
 
   #broadcast(url: string, value: any) {
+    if (this.#closing) return
     for (const peer of this.peers.values()) {
       peer.connection.send(
         JSON.stringify({
