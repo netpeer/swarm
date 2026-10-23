@@ -1,4 +1,5 @@
 import Client from '../exports/client.js'
+import { randomFillSync } from 'node:crypto'
 globalThis.DEBUG = true
 
 const transportKinds = (process.env.SWARM_TEST_TRANSPORT_KINDS || '')
@@ -36,6 +37,7 @@ const client = new Client({
 })
 
 const message = new Uint8Array(64 * 1024)
+if (process.env.SWARM_TEST_RANDOM_PAYLOAD === '1') randomFillSync(message)
 const onceMode = process.env.SWARM_TEST_ONCE === '1'
 const mode = process.env.SWARM_TEST_MODE || 'peer'
 const serverPushValues = new Set()

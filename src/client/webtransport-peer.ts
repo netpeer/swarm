@@ -1,6 +1,7 @@
 import { MAX_MESSAGE_SIZE } from './constants.js'
 import { PeerCore, type PubSubLike } from './peer-core.js'
 import type { NetworkStats } from './peer.js'
+import { FrameReader, encodeFrame, jsonBytes, parseJson } from '../transport-frames.js'
 
 type PeerEvent = 'signal' | 'connect' | 'close' | 'data' | 'error'
 
@@ -23,9 +24,14 @@ type WebTransportLike = {
   close?: () => void
 }
 
-const getWebTransportCtor = (): new (url: string) => WebTransportLike => {
+const getWebTransportCtor = async (): Promise<new (url: string) => WebTransportLike> => {
   const candidate = globalThis as unknown as {
     WebTransport?: new (url: string) => WebTransportLike
+    process?: { versions?: { node?: string } }
+  }
+  if (!candidate.WebTransport && candidate.process?.versions?.node) {
+    const { WebTransport } = await import('@fails-components/webtransport')
+    return WebTransport as unknown as new (url: string) => WebTransportLike
   }
   if (!candidate.WebTransport) {
     throw new Error('WebTransport is not available in this runtime')
@@ -61,6 +67,7 @@ export default class WebTransportPeer {
     to: string
     version: string | number
     url: string
+    getTicket: () => Promise<string>
     compressionThreshold?: number
   }) {
     this.peerId = options.to
@@ -75,7 +82,9 @@ export default class WebTransportPeer {
         kind: 'webtransport-bidi',
         isConnected: () => this.connected,
         sendRaw: (payload) => {
-          void this.#sendRaw(payload)
+          void this.#sendRaw(payload).catch(error => {
+            if (!this.#destroyed) { this.#emit('error', error); this.destroy() }
+          })
         }
       },
       {
@@ -89,7 +98,7 @@ export default class WebTransportPeer {
     )
 
     queueMicrotask(() => {
-      void this.#open(options.url)
+      void this.#open(options)
     })
   }
 
@@ -120,29 +129,35 @@ export default class WebTransportPeer {
     for (const handler of listeners) handler(...args)
   }
 
-  async #open(url: string) {
+  async #open(options: { url: string; getTicket: () => Promise<string> }) {
     try {
-      const WebTransportCtor = getWebTransportCtor()
-      const session = new WebTransportCtor(url)
+      const ticket = await options.getTicket()
+      if (this.#destroyed) return
+      const WebTransportCtor = await getWebTransportCtor()
+      const session = new WebTransportCtor(options.url)
       this.#session = session
+      void session.closed.then(() => this.destroy(), error => {
+        if (!this.#destroyed) { this.#emit('error', error); this.destroy() }
+      })
       await session.ready
+      if (this.#destroyed) return
       const stream = (await session.createBidirectionalStream()) as {
         readable: ReadableStream<Uint8Array>
         writable: WritableStream<Uint8Array>
       }
+      if (this.#destroyed) return
       this.#reader = stream.readable.getReader() as unknown as ReaderLike
       this.#writer = stream.writable.getWriter() as unknown as WriterLike
+      const frames = new FrameReader(this.#reader)
+      await this.#writer.write(encodeFrame(jsonBytes({ protocol: 'swarm-relay/1', ticket })))
+      const ready = parseJson(await frames.read())
+      if (ready.protocol !== 'swarm-relay/1' || ready.peerId !== this.peerId || String(ready.version) !== this.version) {
+        throw new Error('invalid WebTransport relay handshake')
+      }
+      if (this.#destroyed) return
       this.#connected = true
       this.#emit('connect')
-      void this.#readLoop()
-
-      void session.closed.catch((error) => {
-        if (this.#destroyed) return
-        this.#emit(
-          'error',
-          error instanceof Error ? error : new Error(String(error))
-        )
-      })
+      void this.#readLoop(frames)
     } catch (error) {
       this.#emit(
         'error',
@@ -152,16 +167,15 @@ export default class WebTransportPeer {
     }
   }
 
-  async #readLoop() {
+  async #readLoop(frames: FrameReader) {
     const reader = this.#reader
     if (!reader) return
 
     try {
       while (!this.#destroyed) {
         // eslint-disable-next-line no-await-in-loop
-        const { done, value } = await reader.read()
-        if (done) break
-        if (!value) continue
+        const value = await frames.read()
+        if (!value) break
         this.bw.down += value.length
         this.#emit('data', value)
       }
@@ -179,7 +193,7 @@ export default class WebTransportPeer {
 
   async #sendRaw(payload: Uint8Array) {
     if (!this.#writer) throw new Error('WebTransport writer is not ready')
-    await this.#writer.write(payload)
+    await this.#writer.write(encodeFrame(payload))
   }
 
   on(event: PeerEvent, handler: (...args: unknown[]) => void) {
@@ -216,13 +230,13 @@ export default class WebTransportPeer {
     this.#connected = false
 
     try {
-      void this.#reader?.cancel?.()
+      void this.#reader?.cancel?.().catch(() => {})
     } catch (e) {}
     this.#reader?.releaseLock?.()
     this.#reader = null
 
     try {
-      void this.#writer?.close?.()
+      void this.#writer?.close?.().catch(() => {})
     } catch (e) {}
     this.#writer?.releaseLock?.()
     this.#writer = null

@@ -1,6 +1,6 @@
 {
   "name": "@netpeer/swarm",
-  "version": "0.9.12",
+  "version": "0.10.0",
   "exports": {
     "./client": {
       "import": "./exports/client.js",
@@ -22,17 +22,35 @@
   "browser": "./exports/browser/client.js",
   "files": [
     "exports",
+    "docs/webtransport-relay.md",
+    "docs/release-0.10.md",
     "spawn-star.js",
     "spawn-stars.js",
-    "run-server.js"
+    "run-server.js",
+    "relay-config.js",
+    "relay-service.js",
+    "hosted-star.js",
+    "run-webtransport.js"
   ],
   "type": "module",
+  "engines": {
+    "node": ">=24.15.0"
+  },
   "license": "MIT",
   "private": false,
   "scripts": {
     "c": "rollup -c",
     "w": "rollup -c -w",
     "build": "rollup -c",
+    "prepack": "npm run build && npm run test:transport && npm run test:config",
+    "start": "node ./run-server.js",
+    "start:webtransport": "node ./run-webtransport.js",
+    "start:star": "node ./run-server.js",
+    "test:config": "node --test test/relay-config.test.js",
+    "test:auto": "node --test test/auto-relay.test.js",
+    "test:transport": "node --test test/transport.test.js",
+    "test:http3": "node test/webtransport-http3.js",
+    "test:authorization": "node test/relay-authorization.js",
     "test": "node ./test/run-all.js",
     "test:unit": "node ./test/unit-latency.js",
     "test:integration": "node ./test/run-all.js --integration-only",
@@ -43,7 +61,7 @@
   "repository": "https://github.com/netpeer/swarm",
   "author": "vandeurenglenn <vandeurenglenn@gmail.com>",
   "devDependencies": {
-    "@fails-components/webtransport": "^1.6.3",
+    "@types/node": "^24.0.0",
     "@rollup/plugin-commonjs": "^29.0.2",
     "@rollup/plugin-json": "^6.1.0",
     "@rollup/plugin-node-resolve": "^16.0.3",
@@ -54,6 +72,7 @@
     "typescript": "^6.0.2"
   },
   "dependencies": {
+    "@fails-components/webtransport": "^1.6.11",
     "@vandeurenglenn/debug": "^1.4.0",
     "@vandeurenglenn/little-pubsub": "^1.5.2",
     "pako": "^2.1.0",
@@ -61,7 +80,8 @@
     "socket-request-server": "^1.7.3"
   },
   "optionalDependencies": {
-    "@vandeurenglenn/wrtc": "^0.5.4"
+    "@vandeurenglenn/wrtc": "^0.7.2",
+    "@fails-components/webtransport-transport-http3-quiche": "^1.6.11"
   },
   "peerDependencies": {
     "@koush/wrtc": "^0.5.3"
