@@ -15,6 +15,9 @@ export type Options = {
     webtransport?: {
       urlTemplate?: string
     }
+    webrtc?: {
+      backend?: 'vandeurenglenn' | 'koush'
+    }
   }
   /** defaults to peer:connected, can be renamed to handle different protocols, like peer:discovered (setup peer props before fireing the connect event) */
   connectEvent?: string
