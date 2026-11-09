@@ -27,8 +27,7 @@ const transport =
 
 const client = new Client({
   peerId: 'peer-1',
-  networkVersion: 'peach',
-  version: 1,
+  protocolVersion: '1',
   ...(transport ? { transport } : {}),
   stars: [
     process.env.SWARM_TEST_STAR_URL ||

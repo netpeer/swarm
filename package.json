@@ -1,7 +1,11 @@
 {
   "name": "@netpeer/swarm",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "exports": {
+    "./namespace": {
+      "import": "./exports/namespace.js",
+      "types": "./exports/namespace.d.ts"
+    },
     "./client": {
       "import": "./exports/client.js",
       "types": "./exports/client/client.d.ts"
@@ -24,6 +28,7 @@
     "exports",
     "docs/webtransport-relay.md",
     "docs/release-0.10.md",
+    "docs/multiplexed-star.md",
     "spawn-star.js",
     "spawn-stars.js",
     "run-server.js",
@@ -42,13 +47,14 @@
     "c": "rollup -c",
     "w": "rollup -c -w",
     "build": "rollup -c",
-    "prepack": "npm run build && npm run test:transport && npm run test:config",
+    "prepack": "npm run build && npm run test:transport && npm run test:config && npm run test:namespaces",
     "start": "node ./run-server.js",
     "start:webtransport": "node ./run-webtransport.js",
     "start:star": "node ./run-server.js",
     "test:config": "node --test test/relay-config.test.js",
     "test:auto": "node --test test/auto-relay.test.js",
     "test:transport": "node --test test/transport.test.js",
+    "test:namespaces": "node --test test/namespaces.test.js",
     "test:http3": "node test/webtransport-http3.js",
     "test:authorization": "node test/relay-authorization.js",
     "test": "node ./test/run-all.js",
@@ -73,11 +79,11 @@
   },
   "dependencies": {
     "@fails-components/webtransport": "^1.6.11",
+    "@leofcoin/binary": "^1.1.0",
     "@vandeurenglenn/debug": "^1.4.0",
     "@vandeurenglenn/little-pubsub": "^1.5.2",
     "pako": "^3.0.3",
-    "socket-request-client": "^2.1.3",
-    "socket-request-server": "^1.7.5"
+    "websocket": "^1.0.35"
   },
   "optionalDependencies": {
     "@fails-components/webtransport-transport-http3-quiche": "^1.6.11",

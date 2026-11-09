@@ -5,8 +5,7 @@ globalThis.DEBUG = true
 
 const client = new Client({
   peerId: 'peer-large-1',
-  networkVersion: 'peach',
-  version: 1,
+  protocolVersion: '1',
   stars: ['ws://localhost:44444']
 })
 

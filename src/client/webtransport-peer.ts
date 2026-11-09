@@ -68,6 +68,7 @@ export default class WebTransportPeer {
     version: string | number
     url: string
     getTicket: () => Promise<string>
+    scope?: string
     compressionThreshold?: number
   }) {
     this.peerId = options.to
@@ -129,7 +130,7 @@ export default class WebTransportPeer {
     for (const handler of listeners) handler(...args)
   }
 
-  async #open(options: { url: string; getTicket: () => Promise<string> }) {
+  async #open(options: { url: string; getTicket: () => Promise<string>; scope?: string }) {
     try {
       const ticket = await options.getTicket()
       if (this.#destroyed) return
@@ -151,7 +152,7 @@ export default class WebTransportPeer {
       const frames = new FrameReader(this.#reader)
       await this.#writer.write(encodeFrame(jsonBytes({ protocol: 'swarm-relay/1', ticket })))
       const ready = parseJson(await frames.read())
-      if (ready.protocol !== 'swarm-relay/1' || ready.peerId !== this.peerId || String(ready.version) !== this.version) {
+      if (ready.protocol !== 'swarm-relay/1' || ready.peerId !== this.peerId || String(ready.version) !== this.version || (options.scope !== undefined && ready.scope !== options.scope)) {
         throw new Error('invalid WebTransport relay handshake')
       }
       if (this.#destroyed) return

@@ -56,7 +56,7 @@ export const startHostedStar = async (env = process.env) => {
   const relay = config ? await startRelay(config, secret) : null
   let star
   try {
-    star = new Server(Number(env.SWARM_PORT || 44444), env.SWARM_NETWORK || 'peach', {
+    star = new Server(Number(env.SWARM_PORT || 44444), undefined, {
       relaySecret: secret, relayUrl: relay?.url
     })
     await star.ready

@@ -1,0 +1,32 @@
+name: Release package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release-package
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - name: Use supported npm CLI
+        run: npm install --global npm@11.17.0
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:http3
+      - run: npm run test:auto
+      - name: Publish with provenance
+        run: npm publish --access public --provenance

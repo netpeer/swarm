@@ -1,4 +1,6 @@
-import { SocketRequestClient } from 'socket-request-client'
+import { StarConnection } from './star-connection.js'
+import { normalizeNamespace, namespaceKey, assertNetworkOptions, DISCOVERY_PROTOCOL_VERSION, type Namespace } from '../namespace.js'
+import PubSub from '@vandeurenglenn/little-pubsub'
 import WebRTCPeer from './webrtc-peer.js'
 import WebTransportPeer from './webtransport-peer.js'
 import CircuitPeer from './circuit-peer.js'
@@ -62,7 +64,7 @@ type PeerTransportAttempt = {
 
 type CircuitFallbackPayload = {
   id?: string
-  data?: number[]
+  data?: Uint8Array
 }
 
 type TransportMeta = {
@@ -128,9 +130,11 @@ type ClientTestHooks = {
 }
 
 export default class Client {
+  static readonly discoveryProtocolVersion = DISCOVERY_PROTOCOL_VERSION
+  ready: Promise<void>
   #peerId
   #connections: { [index: string]: PeerConnectionLike } = {}
-  #stars: { [index: string]: SocketRequestClient['clientConnection'] } = {}
+  #stars: { [index: string]: StarConnection } = {}
   #starListeners: {
     [index: string]: { topic: string; handler: (...args: any[]) => void }[]
   } = {}
@@ -150,6 +154,7 @@ export default class Client {
   #discoverWebTransport = true
   #relayUrls = new WeakMap<object, string>()
   #circuitHandlers: Map<string, CircuitHandler> = new Map()
+  #serverDataHandlers = new Set<(data: unknown) => void>()
   #pendingCircuitRequests: Map<
     string,
     {
@@ -157,15 +162,15 @@ export default class Client {
       reject: (error: Error) => void
       timeout: ReturnType<typeof setTimeout>
       peerId: string
-      starConnection: SocketRequestClient['clientConnection']
+      starConnection: StarConnection
     }
   > = new Map()
   #circuitRequestTimeoutMs = 30_000
   #retryOptions = { retries: 5, factor: 2, minTimeout: 1000, maxTimeout: 30000 }
   id: string
-  networkVersion: string
   starsConfig: string[]
-  socketClient: SocketRequestClient
+  socketClient: StarConnection
+  readonly namespace: Readonly<Namespace>
   messageSize = 262144
   version: string
 
@@ -197,13 +202,15 @@ export default class Client {
   }
 
   constructor(options: Options) {
-    const { peerId, networkVersion, version, connectEvent, stars } = {
+    if (!globalThis.pubsub) globalThis.pubsub = new PubSub()
+    assertNetworkOptions(options)
+    const { peerId, network, protocolVersion, connectEvent, stars } = {
       ...defaultOptions,
       ...options
     }
     this.#peerId = peerId
-    this.networkVersion = networkVersion
-    this.version = version
+    this.namespace = normalizeNamespace({network,protocolVersion,...(options.chainId === undefined ? {} : {chainId:options.chainId})})
+    this.version = this.namespace.protocolVersion
     this.#testHooks = options.testHooks
     this.#connectEvent = connectEvent
     this.starsConfig = stars
@@ -263,12 +270,12 @@ export default class Client {
       this.#handleFallbackCircuitPayload(payload, context)
     )
     this.#circuitHandlers.set('swarm:fallback:hello', () => ({
-      peerId: this.peerId, version: this.version, encoding: 'peer-core/1'
+      peerId: this.peerId, version: this.version, encoding: 'peer-core/1', namespace: this.namespace
     }))
 
-    if (!this.#testHooks?.skipInit) {
-      this._init()
-    }
+    this.ready = this.#testHooks?.skipInit ? Promise.resolve() : this._init()
+    // Callers can await ready; avoid a detached-constructor unhandled rejection.
+    void this.ready.catch(() => {})
   }
 
   /**
@@ -312,13 +319,13 @@ export default class Client {
     let lastErr
     while (attempt <= retries) {
       try {
-        const client = new SocketRequestClient(star, this.networkVersion)
+        const client = new StarConnection(star)
         this.#stars[star] = await client.init()
         this.setupStarListeners(this.#stars[star], star)
-        this.#stars[star].send({
+        const registered = await this.#stars[star].request({
           url: 'join',
           params: {
-            version: this.version,
+            namespace: this.namespace,
             peerId: this.peerId,
             transport: {
               kind: this.#preferredTransportKind,
@@ -326,10 +333,13 @@ export default class Client {
             }
           }
         })
+        if (!registered?.registered || namespaceKey(registered.namespace) !== namespaceKey(this.namespace)) throw new Error('Star namespace registration mismatch')
         globalThis.pubsub.publishVerbose('star:connected', star)
         debug(`setupStar ${star} succeeded`)
         return this.#stars[star]
       } catch (e) {
+        this.#stars[star]?.close()
+        delete this.#stars[star]
         lastErr = e
         attempt += 1
         if (attempt > retries) break
@@ -376,9 +386,9 @@ export default class Client {
       } catch (e) {
         if (
           this.starsConfig.indexOf(star) === this.starsConfig.length - 1 &&
-          !this.socketClient
+          !Object.values(this.#stars).some(client => client.connectionState() === 'open')
         )
-          throw new Error(`No star available to connect`)
+          throw new Error('No star available to connect', {cause:e})
       }
     }
     if (globalThis.process?.versions?.node) {
@@ -431,7 +441,9 @@ export default class Client {
     const onCircuit = (message) =>
       this.#inComingCircuit(message, starConnection)
     const onServerData = (message) => {
-      globalThis.pubsub.publish('server:data', message)
+      for (const handler of this.#serverDataHandlers) {
+        try { void Promise.resolve(handler(message)).catch(() => {}) } catch {}
+      }
     }
     const onRelayReady = (message: { protocol?: unknown; url?: unknown } | null | undefined) => {
       if (!this.#discoverWebTransport || message?.protocol !== 'swarm-relay/1' || typeof message.url !== 'string') return
@@ -445,7 +457,7 @@ export default class Client {
       // server sends relay metadata before its peer snapshot, so fallback can
       // resolve a real endpoint without users configuring transport URLs.
       starConnection.send({ url: 'join', params: {
-        version: this.version, peerId: this.peerId,
+        peerId: this.peerId, namespace:this.namespace,
         transport: { kind: this.#preferredTransportKind, kinds: [...this.#supportedTransports] }
       } })
     }
@@ -755,14 +767,14 @@ export default class Client {
   } | null {
     if (!payload || typeof payload !== 'object') return null
     const candidate = payload as CircuitFallbackPayload
-    if (!Array.isArray(candidate.data)) return null
+    if (!(candidate.data instanceof Uint8Array)) return null
     const id =
       typeof candidate.id === 'string' && candidate.id.length
         ? candidate.id
         : this.#createCircuitId()
     return {
       id,
-      data: new Uint8Array(candidate.data.map((byte) => Number(byte) & 255))
+      data: candidate.data
     }
   }
 
@@ -808,27 +820,6 @@ export default class Client {
     return `circuit-${Date.now()}-${Math.random().toString(16).slice(2)}`
   }
 
-  #encodeCircuitData(data: unknown): unknown {
-    if (data instanceof Uint8Array) {
-      return { __swarmType: 'u8', data: Array.from(data) }
-    }
-    return data
-  }
-
-  #decodeCircuitData(data: unknown): unknown {
-    if (
-      data &&
-      typeof data === 'object' &&
-      (data as { __swarmType?: string }).__swarmType === 'u8' &&
-      Array.isArray((data as { data?: unknown[] }).data)
-    ) {
-      return new Uint8Array(
-        (data as { data: unknown[] }).data.map((item) => Number(item) & 255)
-      )
-    }
-    return data
-  }
-
   #pickStarConnection() {
     const entries = Object.values(this.#stars)
     return entries.find((client) => client?.connectionState?.() === 'open')
@@ -850,11 +841,11 @@ export default class Client {
   }
 
   onServerData(handler: (data: unknown) => void) {
-    globalThis.pubsub.subscribe('server:data', handler)
+    this.#serverDataHandlers.add(handler)
   }
 
   offServerData(handler: (data: unknown) => void) {
-    globalThis.pubsub.unsubscribe('server:data', handler)
+    this.#serverDataHandlers.delete(handler)
   }
 
   circuitRequest(
@@ -885,7 +876,7 @@ export default class Client {
         id,
         phase: 'request',
         method,
-        data: this.#encodeCircuitData(data)
+        data
       }) } catch (error) {
         clearTimeout(timeout)
         this.#pendingCircuitRequests.delete(id)
@@ -912,7 +903,7 @@ export default class Client {
         pending.reject(new Error(String(error)))
         return
       }
-      pending.resolve(this.#decodeCircuitData(data))
+      pending.resolve(data)
       return
     }
 
@@ -932,7 +923,7 @@ export default class Client {
     }
 
     try {
-      const response = await handler(this.#decodeCircuitData(data), {
+      const response = await handler(data, {
         from,
         method,
         id
@@ -943,7 +934,7 @@ export default class Client {
         from: this.peerId,
         id,
         phase: 'response',
-        data: this.#encodeCircuitData(response)
+        data: response
       })
     } catch (handlerError) {
       this.#sendCircuit(starConnection, {
@@ -1000,7 +991,7 @@ export default class Client {
       .replace('{selfId}', encodeURIComponent(this.peerId))
   }
 
-  #createWebTransportConnection(peerId: string, url: string, version: string, starConnection?: SocketRequestClient['clientConnection']) {
+  #createWebTransportConnection(peerId: string, url: string, version: string, starConnection?: StarConnection) {
     if (this.#connections[peerId]) {
       debug(`peer ${peerId} already connected`)
       return null
@@ -1028,6 +1019,7 @@ export default class Client {
       to: peerId,
       version,
       url,
+      scope: 'v3:' + namespaceKey(this.namespace),
       getTicket: async () => {
         const star = starConnection || this.#pickStarConnection()
         if (!star) throw new Error('no connected star available for WebTransport ticket')
@@ -1084,8 +1076,8 @@ export default class Client {
       handshake: async () => {
         const response = await this.circuitRequest(
           peerId, 'swarm:fallback:hello', undefined, this.#transportConnectTimeoutMs
-        ) as { peerId?: string; version?: string; encoding?: string }
-        if (response?.peerId !== peerId || String(response?.version) !== String(version) || response.encoding !== 'peer-core/1') {
+        ) as { peerId?: string; version?: string; encoding?: string; namespace?: unknown }
+        if (response?.peerId !== peerId || String(response?.version) !== String(version) || response.encoding !== 'peer-core/1' || namespaceKey(response.namespace) !== namespaceKey(this.namespace)) {
           throw new Error('invalid circuit handshake response')
         }
       },
@@ -1142,15 +1134,15 @@ export default class Client {
   }
 
   #peerJoined = async (announcement, star) => {
+    try { if (namespaceKey(announcement?.namespace) !== namespaceKey(this.namespace) || announcement?.version !== this.version) return }
+    catch { return }
     const normalized = normalizePeerAnnouncement(announcement)
     if (!normalized) {
       debug('ignored malformed peer announcement')
       return
     }
     const { peerId, transport } = normalized
-    // Legacy stars announce only the peer id. This value is used for transport
-    // negotiation; applications still perform their own version handshake.
-    const version = normalized.version ?? this.version
+    const version = normalized.version
     if (this.peerId === peerId) return
 
     // Stars can announce the same peer more than once while its transport is

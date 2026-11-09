@@ -2,8 +2,7 @@ import Client from '../exports/client.js'
 
 const client = new Client({
   peerId: 'peer-large-2',
-  networkVersion: 'peach',
-  version: 1,
+  protocolVersion: '1',
   stars: ['ws://localhost:44444']
 })
 

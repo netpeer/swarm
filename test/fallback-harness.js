@@ -115,8 +115,7 @@ const createClient = ({
 
   return new Client({
     peerId: 'peer-a',
-    networkVersion: 'peach',
-    version: 1,
+    protocolVersion: '1',
     stars: ['ws://test-star'],
     transport: {
       ...transport,

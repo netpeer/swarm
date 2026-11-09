@@ -1,7 +1,8 @@
 export type Options = {
   peerId: string
-  networkVersion: string // websocket.protocol
-  version: string // version string to pass to a star when connecting
+  network?: string
+  protocolVersion?: string
+  chainId?: string
   stars: string[]
   transport?: {
     kind?: 'webrtc' | 'webtransport'

@@ -7,8 +7,9 @@ export class RelayTickets {
     this.used = new Map()
   }
   sign(body) { return createHmac('sha256', this.secret).update(body).digest() }
-  issue(from, to, network, version) {
-    const body = Buffer.from(JSON.stringify({ from, to, network, version, exp: Date.now() + 30_000, nonce: randomUUID() })).toString('base64url')
+  issue(from, to, network, version, scope) {
+    if (scope !== undefined && (typeof scope !== 'string' || !scope || scope.length > 1024)) throw new Error('invalid relay scope')
+    const body = Buffer.from(JSON.stringify({ from, to, network, version, ...(scope === undefined ? {} : {scope}), exp: Date.now() + 30_000, nonce: randomUUID() })).toString('base64url')
     return `${body}.${this.sign(body).toString('base64url')}`
   }
   consume(token) {
@@ -20,7 +21,8 @@ export class RelayTickets {
     const value = JSON.parse(Buffer.from(body, 'base64url').toString())
     const now = Date.now()
     if (!Number.isSafeInteger(value.exp) || value.exp <= now || value.exp > now + 30_000 ||
-        !['from', 'to', 'network', 'version', 'nonce'].every(key => typeof value[key] === 'string' && value[key].length > 0) || value.from === value.to) throw new Error('invalid relay ticket')
+        !['from', 'to', 'network', 'version', 'nonce'].every(key => typeof value[key] === 'string' && value[key].length > 0) || value.from === value.to ||
+        (value.scope !== undefined && (typeof value.scope !== 'string' || !value.scope || value.scope.length > 1024))) throw new Error('invalid relay ticket')
     for (const [nonce, expiry] of this.used) if (expiry <= now) this.used.delete(nonce)
     if (this.used.has(value.nonce) || this.used.size >= 10_000) throw new Error('replayed ticket or relay ticket capacity reached')
     this.used.set(value.nonce, value.exp)

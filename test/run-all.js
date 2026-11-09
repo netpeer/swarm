@@ -102,6 +102,7 @@ const main = async () => {
   if (!integrationOnly) {
     await runCommand('build', 'npm', ['run', 'build'])
     await runCommand('transport', process.execPath, ['--test', './test/transport.test.js'])
+    await runCommand('namespaces', process.execPath, ['--test', './test/namespaces.test.js'])
     await runCommand('relay-config', process.execPath, ['--test', './test/relay-config.test.js'])
     await runCommand('authorization', process.execPath, ['./test/relay-authorization.js'], { timeout: 10_000 })
     await runCommand('unit-latency', process.execPath, [

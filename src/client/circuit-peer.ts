@@ -28,7 +28,7 @@ export default class CircuitPeer {
   #listeners: Map<PeerEvent, Set<(...args: unknown[]) => void>> = new Map()
   #destroyed = false
   #connected = false
-  #sendViaCircuit: (payload: { id: string; data: number[] }) => Promise<unknown>
+  #sendViaCircuit: (payload: { id: string; data: Uint8Array }) => Promise<unknown>
   #core: PeerCore
 
   initiator = true
@@ -48,7 +48,7 @@ export default class CircuitPeer {
     handshake: () => Promise<void>
     sendViaCircuit: (payload: {
       id: string
-      data: number[]
+      data: Uint8Array
     }) => Promise<unknown>
   }) {
     this.peerId = options.to
@@ -59,15 +59,14 @@ export default class CircuitPeer {
       kind: 'circuit',
       isConnected: () => this.connected,
       sendRaw: data => {
-        void this.#sendViaCircuit({ id: this.#createMessageId(), data: Array.from(data) }).catch(error => {
+        void this.#sendViaCircuit({ id: this.#createMessageId(), data }).catch(error => {
           if (this.#destroyed) return
           this.#emit('error', error)
           this.destroy()
         })
       }
     }, {
-      // JSON byte arrays expand up to four characters per byte. Keep the whole
-      // WebSocket frame below its default 64 KiB limit, including wrapper/ID.
+      // Bounded frames leave room for the Star envelope. Bytes stay binary.
       maxMessageSize: 14_000,
       compressionThreshold: 0.98,
       getPubSub,

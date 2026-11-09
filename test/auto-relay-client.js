@@ -9,7 +9,7 @@ globalThis.WebTransport = class extends WebTransport {
 const id = process.env.TEST_PEER_ID
 let provedTransport = false
 const client = new Client({
-  peerId: id, version: '0.4.0', networkVersion: 'peach', stars: [process.env.TEST_STAR_URL],
+  peerId: id, protocolVersion: '0.4.0', stars: [process.env.TEST_STAR_URL],
   // No transport URL, kind, or relay secret is configured on the client.
   testHooks: {
     createPeer: ({ kind, peerId }) => {

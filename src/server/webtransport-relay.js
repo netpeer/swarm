@@ -42,8 +42,9 @@ export class WebTransportRelay {
       if (hello.protocol !== 'swarm-relay/1') throw new Error('unsupported relay protocol')
       const claims = this.tickets.consume(hello.ticket)
       const { from, to, network, version } = claims
-      entry.key = JSON.stringify([network, version, from, to])
-      const reverse = JSON.stringify([network, version, to, from])
+      const scope = claims.scope ?? `legacy-unscoped:${JSON.stringify([network, version])}`
+      entry.key = JSON.stringify([scope, from, to])
+      const reverse = JSON.stringify([scope, to, from])
       if (entry.closed) return
       if (this.waiting.has(entry.key)) throw new Error('duplicate relay session')
       const partner = this.waiting.get(reverse)
@@ -58,7 +59,7 @@ export class WebTransportRelay {
       }
       if (entry.closed || !entry.partner || entry.partner.closed) return close()
       clearTimeout(entry.timer)
-      await entry.writer.write(encodeFrame(jsonBytes({ protocol: 'swarm-relay/1', peerId: to, version })))
+      await entry.writer.write(encodeFrame(jsonBytes({ protocol: 'swarm-relay/1', peerId: to, version, ...(claims.scope === undefined ? {} : {scope:claims.scope}) })))
       while (!entry.closed) {
         const frame = await frames.read()
         if (!frame) break

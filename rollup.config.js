@@ -6,6 +6,8 @@ export default [
   {
     input: [
       'src/server/server.ts',
+      'src/namespace.ts',
+      'src/client/star-connection.ts',
       'src/server/webtransport-relay.js',
       'src/server/relay-tickets.js',
       'src/transport-frames.js',
@@ -22,8 +24,7 @@ export default [
     ],
     plugins: [typescript()],
     external: [
-      'socket-request-server',
-      'socket-request-client',
+      '@leofcoin/binary',
       '@koush/wrtc',
       '@vandeurenglenn/wrtc',
       '@fails-components/webtransport',

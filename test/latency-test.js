@@ -3,9 +3,8 @@ import Client from '../exports/client.js'
 globalThis.DEBUG = true
 const client = new Client({
   peerId: 'latency-test-peer',
-  networkVersion: 'peach',
   prefix: '/latency-test/',
-  version: 1,
+  protocolVersion: '1',
   stars: ['ws://localhost:44444']
 })
 

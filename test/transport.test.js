@@ -12,7 +12,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve))
 
 test('relay discovery uses trusted star metadata once and honors explicit opt-out', () => {
   for (const restricted of [false, true]) {
-    const client = new Client({ peerId: 'a', version: '0.4.0', networkVersion: 'peach', stars: [],
+    const client = new Client({ peerId: 'a', protocolVersion: '0.4.0', stars: [],
       testHooks: { skipInit: true }, ...(restricted ? { transport: { kinds: ['webrtc'] } } : {}) })
     const handlers = new Map(), sent = []
     const star = { pubsub: { subscribe: (topic, handler) => handlers.set(topic, handler) }, send: message => sent.push(message) }
@@ -131,4 +131,22 @@ test('relay closes an unpaired session within configured timeout', { timeout: 10
   await pair.closed
   assert.equal(relay.sessions.size, 0)
   assert.equal(relay.waiting.size, 0)
+})
+
+test('identical peer IDs and versions pair only within the exact WebTransport namespace', {timeout:3000},async()=>{
+  const relay=new WebTransportRelay({secret,timeoutMs:1000}),tickets=new RelayTickets(secret),prior=globalThis.WebTransport
+  globalThis.WebTransport=class {constructor(){const pair=makeSession();void relay.accept(pair.session);return pair}}
+  const create=(from,to,scope)=>new WebTransportPeer({from,to,version:'v1',scope,url:'https://relay.invalid/swarm',getTicket:async()=>tickets.issue(from,to,'same-network','v1',scope)})
+  const peers=[]
+  const connected=peer=>new Promise((resolve,reject)=>{peer.on('connect',resolve);peer.on('error',reject)})
+  try {
+    const a=create('a','b','scope-a'),b=create('b','a','scope-b');peers.push(a,b)
+    const readyA=connected(a),readyB=connected(b)
+    await tick();assert.equal(a.connected,false);assert.equal(b.connected,false)
+    const reverseA=create('b','a','scope-a'),reverseB=create('a','b','scope-b');peers.push(reverseA,reverseB)
+    await Promise.all([readyA,readyB,connected(reverseA),connected(reverseB)])
+    const receivedA=new Promise(resolve=>reverseA.on('data',resolve)),receivedB=new Promise(resolve=>b.on('data',resolve))
+    a.send(new Uint8Array([11]));reverseB.send(new Uint8Array([99]))
+    assert.notDeepEqual(await receivedA,await receivedB)
+  }finally{for(const peer of peers)peer.destroy();relay.close();globalThis.WebTransport=prior}
 })
