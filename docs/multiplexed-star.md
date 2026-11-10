@@ -81,6 +81,12 @@ Default bounds: 1 MiB per Star message, 128 active groups, 512 peers per group,
 
 ## Rollout
 
+The `release.yml` workflow uploads a staged npm release with provenance after
+tests. A maintainer reviews and approves that exact package in npm's Staged
+Packages tab (2FA), before it becomes installable. The workflow does not need
+direct-publish permission, does not approve its own stage, and does not change
+the package's security policy. Do not rerun staging while that version is pending.
+
 1. Review and publish the compatible Swarm release; deploy the updated Star.
 2. Update Peernet's minimum Swarm dependency to that published release, rebuild
    both browser and Node artifacts, and publish Peernet.
