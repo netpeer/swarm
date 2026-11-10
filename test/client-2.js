@@ -72,3 +72,9 @@ pubsub.subscribe('peer:connected', (peerId) => {
   console.log({ peerVersion: peer.version })
   // peer.send(message)
 })
+
+// Tell the integration parent only after registration and handler installation.
+void client.ready.then(() => process.send?.({ready:true})).catch(error => {
+  console.error(error)
+  process.exit(1)
+})

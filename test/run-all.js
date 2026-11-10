@@ -60,7 +60,7 @@ const runIntegration = async (scenarioEnv = {}) => {
     env
   })
   const client2 = spawn(process.execPath, ['./test/client-2.js'], {
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     env
   })
 
@@ -73,20 +73,27 @@ const runIntegration = async (scenarioEnv = {}) => {
     process.stderr.write(`[client-2] ${chunk}`)
   )
 
-  let serverExitCode = null
-  server.on('exit', (code) => {
-    serverExitCode = code
-  })
-
-  await wait(750)
-
-  if (serverExitCode !== null && serverExitCode !== 0) {
-    throw new Error(
-      `integration server failed with exit code ${serverExitCode}`
-    )
-  }
-
   try {
+    // A fixed startup sleep races the responder's native transport loading on
+    // slower CI hosts. Registration, not elapsed time, makes circuit targets ready.
+    await new Promise((resolve, reject) => {
+      const finish = error => {
+        clearTimeout(timer)
+        client2.off('message', onMessage)
+        client2.off('exit', onExit)
+        client2.off('error', finish)
+        server.off('exit', onServerExit)
+        error ? reject(error) : resolve()
+      }
+      const onMessage = message => { if (message?.ready) finish() }
+      const onExit = code => finish(new Error(`responder exited ${code} before registration`))
+      const onServerExit = code => finish(new Error(`integration server exited ${code}`))
+      const timer = setTimeout(() => finish(new Error('responder registration timed out')), TIMEOUT_MS)
+      client2.on('message', onMessage)
+      client2.once('exit', onExit)
+      client2.once('error', finish)
+      server.once('exit', onServerExit)
+    })
     await runCommand('client-1', process.execPath, ['./test/client.js'], {
       env,
       timeout: TIMEOUT_MS
